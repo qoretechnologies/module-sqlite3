@@ -613,7 +613,7 @@ void QoreSqlite3PreparedStatement::reset(ExceptionSink* xsink) {
     }
 
     if (m_realArgs) {
-        m_realArgs->deref(xsink);
+        // Just assign nullptr - ReferenceHolder::operator= will handle the deref
         m_realArgs = nullptr;
     }
 
