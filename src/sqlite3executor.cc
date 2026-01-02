@@ -33,8 +33,17 @@ int QoreSqlite3ExecBase::parseForBind(QoreString& str, const QoreListNode* args,
         // Track quoted strings to avoid processing % inside them
         if ((*p) == '\'' || (*p) == '\"') {
             if (!quote) {
+                // Starting a quoted string
                 quote = *p;
             } else if (quote == *p) {
+                // Inside a quoted string and saw the same quote character
+                // Handle SQL-style escaped quotes by doubling (e.g., 'don''t')
+                if (p[1] == quote) {
+                    // Escaped quote: skip both and stay inside the quoted string
+                    p += 2;
+                    continue;
+                }
+                // Closing quote: leave quoted string
                 quote = '\0';
             }
             ++p;

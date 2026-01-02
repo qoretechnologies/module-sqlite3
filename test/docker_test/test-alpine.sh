@@ -8,7 +8,7 @@ ENV_FILE=/tmp/env.sh
 . ${ENV_FILE}
 
 # setup MODULE_SRC_DIR env var
-cwd=`pwd`
+cwd=$(pwd)
 if [ -z "${MODULE_SRC_DIR}" ]; then
     if [ -e "$cwd/src/sqlite3module.cc" ]; then
         MODULE_SRC_DIR=$cwd
