@@ -3,7 +3,7 @@
 
     Qore Programming Language
 
-    Copyright 2003 - 2022 Qore Technologies, s.r.o <http://qore.org>
+    Copyright 2003 - 2026 Qore Technologies, s.r.o <http://qore.org>
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Lesser General Public
@@ -28,20 +28,39 @@ int QoreSqlite3ExecBase::parseForBind(QoreString& str, const QoreListNode* args,
     QoreString tmp;
     int index = 0;
     int nParams = 0;
-    int nIterations = 0;
 
     while (*p) {
-        if (!quote && (*p) != '%') {
+        // Track quoted strings to avoid processing % inside them
+        if ((*p) == '\'' || (*p) == '\"') {
+            if (!quote) {
+                // Starting a quoted string
+                quote = *p;
+            } else if (quote == *p) {
+                // Inside a quoted string and saw the same quote character
+                // Handle SQL-style escaped quotes by doubling (e.g., 'don''t')
+                if (p[1] == quote) {
+                    // Escaped quote: skip both and stay inside the quoted string
+                    p += 2;
+                    continue;
+                }
+                // Closing quote: leave quoted string
+                quote = '\0';
+            }
             ++p;
             continue;
         }
-        // found value marker
 
+        // Skip non-% characters and % inside quotes
+        if (quote || (*p) != '%') {
+            ++p;
+            continue;
+        }
+
+        // found value marker outside quotes
         int offset = p - str.c_str();
 
         p++;
         const QoreValue v = args ? args->retrieveEntry(index++) : QoreValue();
-        ++nIterations;
 
         if ((*p) == 'd') {
             DBI_concat_numeric(&tmp, v);
@@ -60,13 +79,13 @@ int QoreSqlite3ExecBase::parseForBind(QoreString& str, const QoreListNode* args,
         }
         if ((*p) != 'v') {
             xsink->raiseException("SQLITE3-PARSE-EXCEPTION",
-                                  "invalid value specification (expecting '%v' or '%%d', got %%%c)", *p);
+                                  "invalid value specification (expecting '%%v', '%%d', or '%%s', got %%%c)", *p);
             return -1;
         }
         ++p;
         if (isalpha(*p)) {
             xsink->raiseException("SQLITE3-PARSE-EXCEPTION",
-                                  "invalid value specification (expecting '%v' or '%%d', got %%v%c*)", *p);
+                                  "invalid value specification (expecting '%%v', '%%d', or '%%s', got %%v%c*)", *p);
             return -1;
         }
 
@@ -82,14 +101,6 @@ int QoreSqlite3ExecBase::parseForBind(QoreString& str, const QoreListNode* args,
             m_realArgs = new QoreListNode(autoTypeInfo);
         }
         m_realArgs->push(v.refSelf(), xsink);
-
-        if (((*p) == '\'') || ((*p) == '\"')) {
-            if (!quote)
-                quote = *p;
-            else if (v)
-                quote = '\0';
-            ++p;
-        }
     }
 
     return 0;
@@ -161,7 +172,7 @@ int QoreSqlite3ExecBase::bindParameters(sqlite3_stmt* stmt, ExceptionSink* xsink
             }
             case NT_BINARY: {
                 const BinaryNode* b = arg.get<const BinaryNode>();
-                if (SQLITE_OK != sqlite3_bind_blob(stmt, i+1, b->getPtr(), b->size(), nullptr)) {
+                if (SQLITE_OK != sqlite3_bind_blob(stmt, i+1, b->getPtr(), b->size(), SQLITE_TRANSIENT)) {
                     xsink->raiseException("SQLITE3-BIND-EXCEPTION", "Failed to bind BLOB");
                     return -1;
                 }
@@ -181,7 +192,7 @@ QoreValue QoreSqlite3ExecBase::columnValue(sqlite3_stmt * stmt, int index) {
 
     switch (columnType) {
         case SQLITE_INTEGER:
-            return sqlite3_column_int(stmt, index);
+            return sqlite3_column_int64(stmt, index);
 
         case SQLITE_FLOAT:
             return sqlite3_column_double(stmt, index);
@@ -295,13 +306,18 @@ QoreListNode* QoreSqlite3Executor::select_rows(
 
     ReferenceHolder<QoreListNode> res(new QoreListNode(autoTypeInfo), xsink);
 
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
         QoreHashNode* head = new QoreHashNode(autoTypeInfo);
 
         for (int i = 0; i < sqlite3_column_count(stmt); ++i) {
             head->setKeyValue(sqlite3_column_name(stmt, i), columnValue(stmt, i), xsink);
         }
         res->push(head, xsink);
+    }
+
+    if (rc != SQLITE_DONE) {
+        xsink->raiseException("SQLITE3-SELECT-ROWS", "sqlite3 error: %s", sqlite3_errmsg(m_handler));
+        return nullptr;
     }
 
     return res.release();
@@ -348,11 +364,16 @@ QoreHashNode* QoreSqlite3Executor::select_internal(
     }
 
     // fetch the results
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
         for (int i = 0; i < sqlite3_column_count(stmt); ++i) {
             QoreListNode* node = hash->getKeyValue(sqlite3_column_name(stmt, i)).get<QoreListNode>();
             node->push(columnValue(stmt, i), xsink);
         }
+    }
+
+    if (rc != SQLITE_DONE) {
+        xsink->raiseException(calltype, "sqlite3 error: %s", sqlite3_errmsg(m_handler));
+        return nullptr;
     }
 
     return hash.release();
@@ -605,6 +626,7 @@ QoreHashNode* QoreSqlite3PreparedStatement::describe(ExceptionSink* xsink) {
 void QoreSqlite3PreparedStatement::reset(ExceptionSink* xsink) {
     if (stmt) {
         sqlite3_finalize(stmt);
+        stmt = nullptr;
     }
 
     if (sql) {
@@ -612,16 +634,9 @@ void QoreSqlite3PreparedStatement::reset(ExceptionSink* xsink) {
         sql = nullptr;
     }
 
-    if (m_realArgs) {
-        // Just assign nullptr - ReferenceHolder::operator= will handle the deref
-        m_realArgs = nullptr;
-    }
+    // ReferenceHolder handles deref automatically when assigned nullptr
+    m_realArgs = nullptr;
 
-    if (sql_active) {
-        sql_active = false;
-    }
-
-    if (row_count != -1) {
-        row_count = -1;
-    }
+    sql_active = false;
+    row_count = -1;
 }

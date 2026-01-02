@@ -44,6 +44,101 @@ Datasource ds("sqlite3:@/tmp/my-file.sqlite(utf8)");
 
     Like all Qore components, the \c sqlite3 driver is thread-safe.
 
+    @subsection sqlite3_binding_placeholders Bind Placeholders
+
+    The sqlite3 driver supports the following bind placeholder formats in SQL strings:
+
+    |!Placeholder|!Description
+    |\c %v|Bind by value - the value is bound as a parameter to the prepared statement. This is the safest method as it prevents SQL injection.
+    |\c %d|Numeric substitution - the value is converted to a number and substituted directly into the SQL string.
+    |\c %s|String substitution - the value is substituted directly into the SQL string. @warning Use with caution as this can lead to SQL injection if used with untrusted input. This is intended for table/column names that cannot be bound as parameters.
+
+    @par Example
+    @code{.py}
+# Safe binding with %v
+hash<auto> result = ds.select("select * from users where id = %v", user_id);
+
+# Table name substitution with %s (use only with trusted input)
+result = ds.select("select * from %s where active = %v", "users", True);
+
+# Numeric substitution with %d
+result = ds.select("select * from orders where amount > %d", min_amount);
+    @endcode
+
+    @subsection sqlite3_sqlstatement Using SQLStatement
+
+    The sqlite3 driver supports the SQLStatement API for prepared statements:
+
+    @par Example
+    @code{.py}
+# Create a prepared statement
+AbstractSQLStatement stmt = ds.getSQLStatement();
+on_error stmt.rollback();
+on_success stmt.commit();
+
+# Prepare and execute
+stmt.prepare("select id, name from users where status = %v", "active");
+
+# Fetch rows one at a time
+while (stmt.next()) {
+    hash<auto> row = stmt.fetchRow();
+    printf("User: %d - %s\n", row.id, row.name);
+}
+
+# Or fetch in batches
+stmt.prepare("select * from large_table");
+while (*list<hash<auto>> rows = stmt.fetchRows(100)) {
+    # Process batch of 100 rows
+    map process_row($1), rows;
+}
+    @endcode
+
+    @subsection sqlite3_exceptions Exceptions
+
+    The sqlite3 driver can throw the following exceptions:
+
+    |!Exception|!Description
+    |\c DATASOURCE-MISSING-DBNAME|Raised when attempting to open a datasource without a database name
+    |\c SQLITE3-CONNECT-ERROR|Raised when the connection to the database file fails
+    |\c SQLITE3-BEGIN-ERROR|Raised when starting a transaction fails
+    |\c SQLITE3-COMMIT-ERROR|Raised when committing a transaction fails
+    |\c SQLITE3-ROLLBACK-ERROR|Raised when rolling back a transaction fails
+    |\c SQLITE3-PARSE-EXCEPTION|Raised when parsing bind placeholders fails (invalid format)
+    |\c SQLITE3-BIND-EXCEPTION|Raised when binding a parameter fails (unsupported type, etc.)
+    |\c SQLITE3-SELECT-ROWS|Raised when executing a select query fails
+    |\c SQLITE3-EXEC|Raised when executing a statement fails
+    |\c SQLITE3-EXECRAW|Raised when executing a raw statement fails
+    |\c SQLITE3-PREPARE-ERROR|Raised when preparing a statement fails
+    |\c SQLITE3-FETCH-ROW-ERROR|Raised when fetching a row fails (e.g., next() not called)
+    |\c SQLITE3-FETCH-ROWS-ERROR|Raised when fetching rows fails (statement inactive)
+    |\c SQLITE3-FETCH-COLUMNS-ERROR|Raised when fetching columns fails (statement inactive)
+    |\c SQLITE3-DESCRIBE-ERROR|Raised when describe() is called (not supported)
+    |\c SQLITE3-GET-OUTPUT-ERROR|Raised when getOutput() is called (stored procedures not supported)
+    |\c SQLITE3-GET-OUTPUT-ROWS-ERROR|Raised when getOutputRows() is called (stored procedures not supported)
+    |\c SQLITE3-BIND-PLACEHOLDERS-ERROR|Raised when bindPlaceholders() is called (not supported)
+    |\c SQLITE3-STATEMENT-BIND-ERROR|Raised when binding values to a prepared statement fails
+
+    @subsection sqlite3_thread_safety Thread Safety
+
+    The sqlite3 driver is thread-safe. However, when using a single \c Datasource object from multiple threads,
+    you should use a \c DatasourcePool to manage concurrent access:
+
+    @code{.py}
+# Create a pool with 5-20 connections
+DatasourcePool pool("sqlite3:@/path/to/db.sqlite", 5, 20);
+
+# Each thread gets its own connection from the pool
+background sub() {
+    pool.beginTransaction();
+    on_error pool.rollback();
+    on_success pool.commit();
+    pool.exec("insert into log (msg) values (%v)", "thread message");
+}();
+    @endcode
+
+    @note When multiple threads write to the same SQLite database, they may encounter \c SQLITE_BUSY errors
+    if the database is locked. The driver will raise a \c SQLITE3-* exception in this case.
+
     @subsection sqlite3_binding_by_value Binding By Value
 
     SQLite implements different data type handling compared to other DB servers and engines.  Please refer to the
@@ -64,8 +159,21 @@ Datasource ds("sqlite3:@/tmp/my-file.sqlite(utf8)");
     |\c date|\c STRING|Date-time values are converted to an ISO-8601 format and stored as strings
     |\c number|\c STRING|Arbitrary-precision numeric data is converted and stored as a string
     |\c binary|\c BLOB|Binary data is stored directly
+    |\c NULL / \c NOTHING|\c NULL|Qore NULL and NOTHING values are bound as SQLite NULL
 
     @section sqlite3releasenotes Release Notes
+
+    @subsection sqlite_1_2_0 sqlite3 Driver Version 1.2.0
+    - fixed BLOB binding memory safety issue: now uses \c SQLITE_TRANSIENT to ensure SQLite makes a copy
+      of binary data, preventing potential use-after-free bugs
+    - fixed integer truncation: now uses \c sqlite3_column_int64() instead of \c sqlite3_column_int()
+      to properly handle 64-bit integers
+    - fixed SQL parser quote handling: bind placeholders inside quoted strings are now correctly ignored
+    - added proper error checking for \c sqlite3_step() return values: now distinguishes between
+      \c SQLITE_DONE (success) and error conditions like \c SQLITE_BUSY or \c SQLITE_ERROR
+    - added \c DBI_CAP_HAS_STATEMENT capability to properly advertise prepared statement support
+    - added GitLab CI configuration with k8s runner support
+    - improved documentation with bind placeholder reference and exception documentation
 
     @subsection sqlite_1_1_0 sqlite3 Driver Version 1.1.0
     - added support for the SQL statement API

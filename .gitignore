@@ -1,31 +1,30 @@
+# Build directory
+build/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
 Makefile
-Makefile.in
-acinclude.m4
-aclocal.m4
-compile
-config.guess
 config.h
-config.h.in
-config.log
-config.status
-config.sub
-configure
-depcomp
-install-sh
-libtool
-ltmain.sh
-missing
-stamp-h1
+
+# Editor backups
 *~
+
+# Compiled objects
+*.o
 *.lo
 *.la
-autom4te.cache/
-m4/
-src/.deps/
-src/.libs/
-src/Makefile
-src/Makefile.in
-src/*.dox.h
-src/qc_*.cpp
-src/ql_*.cpp
-src/QC_*.cpp
+*.so
+
+# Test artifacts
+*.sqlite
+test.sqlite
+
+# Generated documentation
+docs/sqlite3/
+
+# IDE
+.idea/
+.vscode/
+*.swp

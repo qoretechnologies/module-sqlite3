@@ -44,7 +44,7 @@
 
 Summary: SQLite3 DBI module for Qore
 Name: qore-sqlite3-module
-Version: 1.1.0
+Version: 1.2.0
 Release: 1%{dist}
 License: LGPL
 Group: Development/Languages
@@ -117,6 +117,16 @@ This RPM provides API documentation, test and example programs
 %doc docs/sqlite3/html test/basic.qtest test/sqlite3test-threading.q test/blob.png
 
 %changelog
+* Thu Jan 2 2026 David Nichols <david.nichols@qoretechnologies.com>
+- updated to version 1.2.0
+- fixed BLOB binding memory safety issue (use SQLITE_TRANSIENT)
+- fixed integer truncation (use sqlite3_column_int64)
+- fixed quote handling in SQL parser
+- added proper error checking for sqlite3_step()
+- added DBI_CAP_HAS_STATEMENT capability
+- added GitLab CI with k8s runner
+- improved documentation
+
 * Mon May 2 2022 David Nichols <david.nichols@qoretechnologies.com>
 - updated to version 1.1.0
 
