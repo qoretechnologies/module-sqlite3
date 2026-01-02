@@ -201,7 +201,7 @@ static int qore_sqlite3_stmt_bind(SQLStatement* stmt, const QoreListNode& l, Exc
 }
 
 static int qore_sqlite3_stmt_bind_placeholders(SQLStatement* stmt, const QoreListNode& l, ExceptionSink* xsink) {
-    xsink->raiseException("SQLITE3-BIND-PLACEHHODERS-ERROR", "binding placeholders is not necessary or supported "
+    xsink->raiseException("SQLITE3-BIND-PLACEHOLDERS-ERROR", "binding placeholders is not necessary or supported "
         "with the sqlite3 driver");
     return -1;
 }
