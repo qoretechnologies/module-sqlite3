@@ -3,7 +3,7 @@
 
     Qore Programming Language
 
-    Copyright 2003 - 2021 Qore Technologies, s.r.o <http://qore.org>
+    Copyright 2003 - 2026 Qore Technologies, s.r.o <http://qore.org>
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Lesser General Public
@@ -201,7 +201,7 @@ static int qore_sqlite3_stmt_bind(SQLStatement* stmt, const QoreListNode& l, Exc
 }
 
 static int qore_sqlite3_stmt_bind_placeholders(SQLStatement* stmt, const QoreListNode& l, ExceptionSink* xsink) {
-    xsink->raiseException("SQLITE3-BIND-PLACEHHODERS-ERROR", "binding placeholders is not necessary or supported "
+    xsink->raiseException("SQLITE3-BIND-PLACEHOLDERS-ERROR", "binding placeholders is not necessary or supported "
         "with the sqlite3 driver");
     return -1;
 }
@@ -325,6 +325,7 @@ QoreStringNode* qore_sqlite3_module_init() {
         | DBI_CAP_HAS_EXECRAW
         | DBI_CAP_CHARSET_SUPPORT
         | DBI_CAP_HAS_NUMBER_SUPPORT
+        | DBI_CAP_HAS_STATEMENT
     );
 
     return 0;
