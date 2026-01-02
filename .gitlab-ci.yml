@@ -4,6 +4,7 @@ stages:
 default:
   tags:
     - k8s
+    - amd64
   before_script:
     - |
         curl "https://api.github.com/repos/qoretechnologies/${REPO_NAME}/statuses/${CI_COMMIT_SHA}" \
