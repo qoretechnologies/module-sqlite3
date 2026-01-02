@@ -32,6 +32,10 @@ class Sqlite3BasicTest inherits QUnit::Test {
         }
 
         addTestCase("BasicTest", \basicTest());
+        addTestCase("NegativeTests", \negativeTests());
+        addTestCase("CornerCaseTests", \cornerCaseTests());
+        addTestCase("NullHandlingTests", \nullHandlingTests());
+        addTestCase("LargeIntegerTests", \largeIntegerTests());
 
         set_return_value(main());
     }
@@ -205,6 +209,180 @@ class Sqlite3BasicTest inherits QUnit::Test {
             stmt.exec();
             assertEq(1, stmt.affectedRows());
         }
+
+        ds.rollback();
+    }
+
+    negativeTests() {
+        # Create a test table for these tests
+        execIgnore("drop table neg_test");
+        ds.exec("create table neg_test (id integer, txt text)");
+        on_exit {
+            ds.rollback();
+            execIgnore("drop table neg_test");
+        }
+        ds.commit();
+
+        # Test invalid bind placeholder
+        assertThrows("SQLITE3-PARSE-EXCEPTION", sub() {
+            ds.exec("select * from neg_test where id = %z", 1);
+        });
+
+        # Test invalid bind placeholder with trailing alpha
+        assertThrows("SQLITE3-PARSE-EXCEPTION", sub() {
+            ds.exec("select * from neg_test where id = %va", 1);
+        });
+
+        # Test binding unsupported type (hash)
+        assertThrows("SQLITE3-BIND-EXCEPTION", sub() {
+            ds.exec("insert into neg_test (txt) values (%v)", {"key": "value"});
+        });
+
+        # Test invalid SQL syntax
+        assertThrows("SQLITE3-EXEC", sub() {
+            ds.exec("selekt * form neg_test");
+        });
+
+        # Test SQLStatement fetchRow without next()
+        {
+            ds.exec("insert into neg_test (id) values (1)");
+            ds.commit();
+
+            AbstractSQLStatement stmt = ds.getSQLStatement();
+            on_error stmt.rollback();
+            on_success stmt.commit();
+            stmt.prepare("select * from neg_test");
+            # Try to fetch without calling next() first
+            assertThrows("SQLITE3-FETCH-ROW-ERROR", \stmt.fetchRow());
+        }
+    }
+
+    cornerCaseTests() {
+        execIgnore("drop table corner_test");
+        ds.exec("create table corner_test (
+            id integer primary key,
+            txt text,
+            num real,
+            blb blob
+        )");
+        on_exit {
+            ds.rollback();
+            execIgnore("drop table corner_test");
+        }
+
+        # Test empty string vs NULL
+        ds.exec("insert into corner_test (id, txt) values (%v, %v)", 1, "");
+        ds.exec("insert into corner_test (id, txt) values (%v, %v)", 2, NULL);
+        ds.commit();
+
+        auto result = ds.selectRows("select * from corner_test order by id");
+        assertEq(2, result.size());
+        assertEq("", result[0].txt);  # Empty string
+        assertEq(NULL, result[1].txt);  # NULL
+
+        # Test binary data
+        ds.exec("insert into corner_test (id, blb) values (%v, %v)", 3, <abcd>);
+        ds.commit();
+
+        result = ds.selectRows("select * from corner_test where id = 3");
+        assertEq(1, result.size());
+        assertEq(<abcd>, result[0].blb);
+
+        # Note: Zero-length blobs in SQLite are indistinguishable from NULL
+        # when using sqlite3_column_bytes(), so we don't test for that edge case
+
+        # Test unicode/multibyte characters
+        string unicode_str = "Hello 世界 🌍 émojis";
+        ds.exec("insert into corner_test (id, txt) values (%v, %v)", 5, unicode_str);
+        ds.commit();
+
+        result = ds.selectRows("select txt from corner_test where id = 5");
+        assertEq(unicode_str, result[0].txt);
+
+        # Test quoted string with % - should NOT be parsed as bind placeholder
+        ds.exec("insert into corner_test (id, txt) values (%v, '%v is literal')", 4);
+        ds.commit();
+        result = ds.selectRows("select txt from corner_test where id = 4");
+        assertEq("%v is literal", result[0].txt);
+
+        ds.rollback();
+    }
+
+    nullHandlingTests() {
+        execIgnore("drop table null_test");
+        ds.exec("create table null_test (
+            id integer primary key,
+            int_col integer,
+            txt_col text,
+            real_col real,
+            blob_col blob
+        )");
+        on_exit {
+            ds.rollback();
+            execIgnore("drop table null_test");
+        }
+
+        # Insert NULL values for all column types
+        ds.exec("insert into null_test (id, int_col, txt_col, real_col, blob_col) values (%v, %v, %v, %v, %v)",
+            1, NULL, NULL, NULL, NULL);
+        # Insert NOTHING values (should also become NULL)
+        ds.exec("insert into null_test (id, int_col, txt_col, real_col, blob_col) values (%v, %v, %v, %v, %v)",
+            2, NOTHING, NOTHING, NOTHING, NOTHING);
+        ds.commit();
+
+        auto result = ds.selectRows("select * from null_test order by id");
+        assertEq(2, result.size());
+
+        # Both NULL and NOTHING should result in NULL values
+        assertEq(NULL, result[0].int_col);
+        assertEq(NULL, result[0].txt_col);
+        assertEq(NULL, result[0].real_col);
+        assertEq(NULL, result[0].blob_col);
+
+        assertEq(NULL, result[1].int_col);
+        assertEq(NULL, result[1].txt_col);
+        assertEq(NULL, result[1].real_col);
+        assertEq(NULL, result[1].blob_col);
+
+        # Test IS NULL query
+        result = ds.selectRows("select count(*) as cnt from null_test where int_col is null");
+        assertEq(2, result[0].cnt);
+
+        ds.rollback();
+    }
+
+    largeIntegerTests() {
+        execIgnore("drop table int_test");
+        ds.exec("create table int_test (id integer primary key, big_int integer)");
+        on_exit {
+            ds.rollback();
+            execIgnore("drop table int_test");
+        }
+
+        # Test 64-bit integer boundaries
+        int max_int64 = MAXINT;               # 2^63 - 1
+        int min_int64 = MININT;               # -2^63 + 1
+        int large_positive = 4294967296;      # 2^32 (larger than 32-bit)
+        int large_negative = -4294967296;
+
+        ds.exec("insert into int_test (id, big_int) values (%v, %v)", 1, max_int64);
+        ds.exec("insert into int_test (id, big_int) values (%v, %v)", 2, min_int64);
+        ds.exec("insert into int_test (id, big_int) values (%v, %v)", 3, large_positive);
+        ds.exec("insert into int_test (id, big_int) values (%v, %v)", 4, large_negative);
+        ds.exec("insert into int_test (id, big_int) values (%v, %v)", 5, 0);
+        ds.commit();
+
+        auto result = ds.selectRows("select * from int_test order by id");
+        assertEq(5, result.size());
+        assertEq(max_int64, result[0].big_int);
+        assertEq(min_int64, result[1].big_int);
+        assertEq(large_positive, result[2].big_int);
+        assertEq(large_negative, result[3].big_int);
+        assertEq(0, result[4].big_int);
+
+        # Verify the types are integers
+        assertEq(Type::Int, result[0].big_int.type());
+        assertEq(Type::Int, result[2].big_int.type());
 
         ds.rollback();
     }
