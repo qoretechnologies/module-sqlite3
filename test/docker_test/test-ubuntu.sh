@@ -25,6 +25,10 @@ echo "export QORE_GID=999" >> ${ENV_FILE}
 
 export MAKE_JOBS=4
 
+# install sqlite3 development package
+apt-get update
+apt-get install -y libsqlite3-dev
+
 # build module and install
 echo && echo "-- building module --"
 mkdir -p ${MODULE_SRC_DIR}/build
