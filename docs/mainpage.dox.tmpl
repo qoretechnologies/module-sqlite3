@@ -164,6 +164,10 @@ background sub() {
     @section sqlite3releasenotes Release Notes
 
     @subsection sqlite_1_2_0 sqlite3 Driver Version 1.2.0
+    - added support for interruptible I/O for graceful termination of sandboxed programs; interrupt
+      checks are performed before database open, statement preparation, and periodically during fetch
+      operations
+      (<a href="https://github.com/qoretechnologies/qore/issues/5116">issue 5116</a>)
     - fixed BLOB binding memory safety issue: now uses \c SQLITE_TRANSIENT to ensure SQLite makes a copy
       of binary data, preventing potential use-after-free bugs
     - fixed integer truncation: now uses \c sqlite3_column_int64() instead of \c sqlite3_column_int()
