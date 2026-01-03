@@ -291,6 +291,11 @@ QoreListNode* QoreSqlite3Executor::select_rows(
         return nullptr;
     }
 
+    // Check for interrupt before statement preparation
+    if (qore_check_io_interrupt(xsink)) {
+        return nullptr;
+    }
+
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(m_handler, statement.c_str(), -1, &stmt, 0);
     if (rc != SQLITE_OK) {
@@ -305,8 +310,15 @@ QoreListNode* QoreSqlite3Executor::select_rows(
     }
 
     ReferenceHolder<QoreListNode> res(new QoreListNode(autoTypeInfo), xsink);
+    int row_count = 0;
 
     while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        // Check for interrupt periodically during fetch (every 100 rows)
+        if ((row_count % 100) == 0 && qore_check_io_interrupt(xsink)) {
+            return nullptr;
+        }
+        ++row_count;
+
         QoreHashNode* head = new QoreHashNode(autoTypeInfo);
 
         for (int i = 0; i < sqlite3_column_count(stmt); ++i) {
@@ -343,6 +355,11 @@ QoreHashNode* QoreSqlite3Executor::select_internal(
         }
     }
 
+    // Check for interrupt before statement preparation
+    if (qore_check_io_interrupt(xsink)) {
+        return nullptr;
+    }
+
     sqlite3_stmt* stmt;
     int rc = sqlite3_prepare_v2(m_handler, statement.c_str(), -1, &stmt, 0);
     if (rc != SQLITE_OK) {
@@ -364,7 +381,14 @@ QoreHashNode* QoreSqlite3Executor::select_internal(
     }
 
     // fetch the results
+    int row_count = 0;
     while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        // Check for interrupt periodically during fetch (every 100 rows)
+        if ((row_count % 100) == 0 && qore_check_io_interrupt(xsink)) {
+            return nullptr;
+        }
+        ++row_count;
+
         for (int i = 0; i < sqlite3_column_count(stmt); ++i) {
             QoreListNode* node = hash->getKeyValue(sqlite3_column_name(stmt, i)).get<QoreListNode>();
             node->push(columnValue(stmt, i), xsink);
@@ -395,6 +419,11 @@ int QoreSqlite3PreparedStatement::prepare(const QoreString& sql, const QoreListN
 
     if (parse && parseForBind(*this->sql, args, xsink)) {
         xsink->raiseException("SQLITE3-PREPARE-ERROR", "failed to parse bind variables");
+        return -1;
+    }
+
+    // Check for interrupt before statement preparation
+    if (qore_check_io_interrupt(xsink)) {
         return -1;
     }
 
@@ -461,6 +490,11 @@ QoreHashNode* QoreSqlite3PreparedStatement::getOutputHash(ExceptionSink* xsink, 
 
     // fetch the results
     while (next()) {
+        // Check for interrupt periodically during fetch (every 100 rows)
+        if ((row_count % 100) == 0 && qore_check_io_interrupt(xsink)) {
+            return nullptr;
+        }
+
         if (rv->empty()) {
             for (int i = 0; i < sqlite3_column_count(stmt); ++i) {
                 rv->setKeyValue(sqlite3_column_name(stmt, i), new QoreListNode(autoTypeInfo), xsink);
@@ -490,6 +524,11 @@ QoreListNode* QoreSqlite3PreparedStatement::getOutputList(ExceptionSink* xsink, 
 
     ReferenceHolder<QoreListNode> rv(new QoreListNode(autoHashTypeInfo), xsink);
     while (next()) {
+        // Check for interrupt periodically during fetch (every 100 rows)
+        if ((row_count % 100) == 0 && qore_check_io_interrupt(xsink)) {
+            return nullptr;
+        }
+
         ReferenceHolder<QoreHashNode> head(new QoreHashNode(autoTypeInfo), xsink);
 
         for (int i = 0; i < sqlite3_column_count(stmt); ++i) {

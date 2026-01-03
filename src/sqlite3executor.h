@@ -25,6 +25,7 @@
 
 #include <sqlite3.h>
 #include <qore/Qore.h>
+#include <qore/QoreSandboxManager.h>
 
 #include "sqlite3connection.h"
 

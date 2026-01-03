@@ -27,6 +27,7 @@
 #include <strings.h>
 
 #include <qore/Qore.h>
+#include <qore/QoreSandboxManager.h>
 
 #include "sqlite3module.h"
 #include "sqlite3connection.h"
@@ -72,6 +73,11 @@ static sqlite3* qore_sqlite3_init(Datasource* ds, ExceptionSink* xsink) {
     // TODO/FIXME: better encoding handling (but sqlite is utf8 mainly)
     ds->setDBEncoding("utf8");
     ds->setQoreEncoding("utf8");
+
+    // Check for interrupt before database open
+    if (qore_check_io_interrupt(xsink)) {
+        return nullptr;
+    }
 
     sqlite3 *db;
     int ret = sqlite3_open(ds->getDBName(), &db);
