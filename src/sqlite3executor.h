@@ -179,7 +179,7 @@ public:
     DLLLOCAL QoreListNode* fetchRows(int rows, ExceptionSink* xsink);
     DLLLOCAL QoreHashNode* fetchColumns(int rows, ExceptionSink* xsink);
     DLLLOCAL QoreHashNode* describe(ExceptionSink* xsink);
-    DLLLOCAL bool next();
+    DLLLOCAL bool next(ExceptionSink* xsink = nullptr);
 
     DLLLOCAL QoreHashNode* getOutputHash(ExceptionSink* xsink, int maxrows = -1);
     DLLLOCAL QoreListNode* getOutputList(ExceptionSink* xsink, int maxrows = -1);

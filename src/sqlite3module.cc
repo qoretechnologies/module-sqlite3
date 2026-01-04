@@ -79,6 +79,18 @@ static sqlite3* qore_sqlite3_init(Datasource* ds, ExceptionSink* xsink) {
         return nullptr;
     }
 
+    // Check filesystem sandbox access (skip for in-memory databases)
+    const char* dbname = ds->getDBName();
+    if (strcmp(dbname, ":memory:") != 0 && strncmp(dbname, "file::memory:", 13) != 0) {
+        QoreSandboxManager* sm = runtime_get_sandbox_manager();
+        if (sm) {
+            // SQLite databases need read/write access (or create for new files)
+            if (!sm->checkFilesystemAccess(dbname, QSEC_READ | QSEC_WRITE | QSEC_CREATE, xsink)) {
+                return nullptr;
+            }
+        }
+    }
+
     sqlite3 *db;
     int ret = sqlite3_open(ds->getDBName(), &db);
     if (ret != SQLITE_OK) {
@@ -274,7 +286,7 @@ static QoreHashNode* qore_sqlite3_stmt_describe(SQLStatement* stmt, ExceptionSin
 static bool qore_sqlite3_stmt_next(SQLStatement* stmt, ExceptionSink* xsink) {
     QoreSqlite3PreparedStatement* bg = (QoreSqlite3PreparedStatement*)stmt->getPrivateData();
     assert(bg);
-    return bg->next();
+    return bg->next(xsink);
 }
 
 static int qore_sqlite3_stmt_close(SQLStatement* stmt, ExceptionSink* xsink) {

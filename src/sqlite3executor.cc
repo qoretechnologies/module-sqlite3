@@ -459,11 +459,17 @@ int QoreSqlite3PreparedStatement::exec(ExceptionSink* xsink) {
     return 0;
 }
 
-bool QoreSqlite3PreparedStatement::next() {
+bool QoreSqlite3PreparedStatement::next(ExceptionSink* xsink) {
     if (!sql_active) {
         return false;
     }
     assert(sql_active);
+
+    // Check for interrupt before fetching next row
+    if (xsink && qore_check_io_interrupt(xsink)) {
+        sql_active = false;
+        return false;
+    }
 
     if (sqlite3_step(stmt) != SQLITE_ROW) {
         sql_active = false;
@@ -489,9 +495,8 @@ QoreHashNode* QoreSqlite3PreparedStatement::getOutputHash(ExceptionSink* xsink, 
     ReferenceHolder<QoreHashNode> rv(new QoreHashNode(autoTypeInfo), xsink);
 
     // fetch the results
-    while (next()) {
-        // Check for interrupt periodically during fetch (every 100 rows)
-        if ((row_count % 100) == 0 && qore_check_io_interrupt(xsink)) {
+    while (next(xsink)) {
+        if (*xsink) {
             return nullptr;
         }
 
@@ -523,9 +528,8 @@ QoreListNode* QoreSqlite3PreparedStatement::getOutputList(ExceptionSink* xsink, 
     int end = row_count + maxrows;
 
     ReferenceHolder<QoreListNode> rv(new QoreListNode(autoHashTypeInfo), xsink);
-    while (next()) {
-        // Check for interrupt periodically during fetch (every 100 rows)
-        if ((row_count % 100) == 0 && qore_check_io_interrupt(xsink)) {
+    while (next(xsink)) {
+        if (*xsink) {
             return nullptr;
         }
 

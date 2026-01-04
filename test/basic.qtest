@@ -36,6 +36,7 @@ class Sqlite3BasicTest inherits QUnit::Test {
         addTestCase("CornerCaseTests", \cornerCaseTests());
         addTestCase("NullHandlingTests", \nullHandlingTests());
         addTestCase("LargeIntegerTests", \largeIntegerTests());
+        addTestCase("SandboxFilesystemTest", \sandboxFilesystemTest());
 
         set_return_value(main());
     }
@@ -385,6 +386,84 @@ class Sqlite3BasicTest inherits QUnit::Test {
         assertEq(Type::Int, result[2].big_int.type());
 
         ds.rollback();
+    }
+
+    sandboxFilesystemTest() {
+        # Test that filesystem sandbox blocks database file access outside allowed paths
+
+        string testDbPath = "/tmp/sqlite3_sandbox_test_" + getpid() + ".db";
+        on_exit {
+            try { unlink(testDbPath); } catch () {}
+        }
+
+        # Create a sandboxed program with /var as root (so /tmp is outside)
+        Program p(PO_NEW_STYLE | PO_STRICT_ARGS | PO_REQUIRE_TYPES);
+        p.loadModule("sqlite3");
+
+        p.parse(sprintf("
+            sub test_open_db() {
+                Datasource ds('sqlite3', '', '', '%s');
+                ds.open();
+            }
+        ", testDbPath), "sandbox_db_test");
+
+        SandboxManager sm();
+        sm.setFilesystemSandboxRoot("/var");
+        p.setSandboxManager(sm);
+
+        # Test that database open is blocked when file is outside sandbox
+        bool caught = False;
+        try {
+            p.callFunction("test_open_db");
+        } catch (hash<ExceptionInfo> ex) {
+            caught = True;
+            assertEq("FILESYSTEM-ACCESS-DENIED", ex.err, "Database access blocked with correct error");
+        }
+        assertTrue(caught, "Database access outside sandbox was blocked");
+
+        # Test that :memory: database works even with filesystem sandbox
+        Program p2(PO_NEW_STYLE | PO_STRICT_ARGS | PO_REQUIRE_TYPES);
+        p2.loadModule("sqlite3");
+
+        p2.parse("
+            int sub test_memory_db() {
+                Datasource ds('sqlite3', '', '', ':memory:');
+                ds.open();
+                ds.exec('create table test (id integer)');
+                ds.exec('insert into test values (42)');
+                ds.commit();
+                auto result = ds.selectRow('select id from test');
+                ds.close();
+                return result.id;
+            }
+        ", "sandbox_memory_db_test");
+        p2.setSandboxManager(sm);
+
+        int result = p2.callFunction("test_memory_db");
+        assertEq(42, result, "In-memory database works even with filesystem sandbox");
+
+        # Test that database access works when file is in allowed path
+        SandboxManager sm3();
+        sm3.setFilesystemSandboxRoot("/tmp");
+        Program p3(PO_NEW_STYLE | PO_STRICT_ARGS | PO_REQUIRE_TYPES);
+        p3.loadModule("sqlite3");
+
+        p3.parse(sprintf("
+            int sub test_allowed_db() {
+                Datasource ds('sqlite3', '', '', '%s');
+                ds.open();
+                ds.exec('create table test (id integer)');
+                ds.exec('insert into test values (123)');
+                ds.commit();
+                auto result = ds.selectRow('select id from test');
+                ds.close();
+                return result.id;
+            }
+        ", testDbPath), "sandbox_allowed_db_test");
+        p3.setSandboxManager(sm3);
+
+        result = p3.callFunction("test_allowed_db");
+        assertEq(123, result, "Database access inside sandbox works");
     }
 
     execIgnore(string sql) {
