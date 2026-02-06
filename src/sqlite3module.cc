@@ -34,20 +34,24 @@
 #include "sqlite3executor.h"
 #include "config.h"
 
-#ifndef QORE_MONOLITHIC
-DLLEXPORT char qore_module_name[] = "sqlite3";
-DLLEXPORT char qore_module_version[] = PACKAGE_VERSION;
-DLLEXPORT char qore_module_description[] = "Sqlite3 database driver";
-DLLEXPORT char qore_module_author[] = "Petr Vanek";
-DLLEXPORT char qore_module_url[] = "http://www.qore.org";
-DLLEXPORT int qore_module_api_major = QORE_MODULE_API_MAJOR;
-DLLEXPORT int qore_module_api_minor = QORE_MODULE_API_MINOR;
-DLLEXPORT qore_module_init_t qore_module_init = qore_sqlite3_module_init;
-DLLEXPORT qore_module_ns_init_t qore_module_ns_init = qore_sqlite3_module_ns_init;
-DLLEXPORT qore_module_delete_t qore_module_delete = qore_sqlite3_module_delete;
-DLLEXPORT qore_license_t qore_module_license = QL_MIT;
-DLLEXPORT char qore_module_license_str[] = "MIT";
-#endif
+static void qore_sqlite3_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink);
+static void qore_sqlite3_module_ns_init(QoreNamespace* rns, QoreNamespace* qns, ExceptionSink& xsink);
+static void qore_sqlite3_module_delete();
+
+extern "C" DLLEXPORT void sqlite3_qore_module_desc(QoreModuleInfo& mod_info) {
+    mod_info.name = "sqlite3";
+    mod_info.version = PACKAGE_VERSION;
+    mod_info.desc = "Sqlite3 database driver";
+    mod_info.author = "Petr Vanek";
+    mod_info.url = "http://www.qore.org";
+    mod_info.api_major = QORE_MODULE_API_MAJOR;
+    mod_info.api_minor = QORE_MODULE_API_MINOR;
+    mod_info.init = qore_sqlite3_module_init;
+    mod_info.ns_init = qore_sqlite3_module_ns_init;
+    mod_info.del = qore_sqlite3_module_delete;
+    mod_info.license = QL_MIT;
+    mod_info.license_str = "MIT";
+}
 
 DBIDriver* DBID_SQLITE3 = nullptr;
 
@@ -298,7 +302,7 @@ static int qore_sqlite3_stmt_close(SQLStatement* stmt, ExceptionSink* xsink) {
     return *xsink ? -1 : 0;
 }
 
-QoreStringNode* qore_sqlite3_module_init() {
+static void qore_sqlite3_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink) {
     pthread_key_create(&ptk_sqlite3, NULL);
     tclist.push(sqlite3_thread_cleanup, NULL);
 
@@ -346,15 +350,14 @@ QoreStringNode* qore_sqlite3_module_init() {
         | DBI_CAP_HAS_STATEMENT
     );
 
-    return 0;
 }
 
-void qore_sqlite3_module_ns_init(QoreNamespace* rns, QoreNamespace* qns) {
+static void qore_sqlite3_module_ns_init(QoreNamespace* rns, QoreNamespace* qns, ExceptionSink& xsink) {
     QORE_TRACE("qore_sqlite3_module_ns_init()");
     // nothing to do at the moment
 }
 
-void qore_sqlite3_module_delete() {
+static void qore_sqlite3_module_delete() {
     QORE_TRACE("qore_sqlite3_module_delete()");
 
     // cleanup any thread data

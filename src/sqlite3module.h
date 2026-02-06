@@ -23,8 +23,5 @@
 #ifndef SQLITE3MODULE_H
 #define SQLITE3MODULE_H
 
-QoreStringNode *qore_sqlite3_module_init();
-void qore_sqlite3_module_ns_init(QoreNamespace *rns, QoreNamespace *qns);
-void qore_sqlite3_module_delete(void);
 
 #endif
