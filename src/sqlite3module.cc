@@ -86,10 +86,10 @@ static sqlite3* qore_sqlite3_init(Datasource* ds, ExceptionSink* xsink) {
     // Check filesystem sandbox access (skip for in-memory databases)
     const char* dbname = ds->getDBName();
     if (strcmp(dbname, ":memory:") != 0 && strncmp(dbname, "file::memory:", 13) != 0) {
-        QoreSandboxManager* sm = runtime_get_sandbox_manager();
-        if (sm) {
+        QoreSandboxManagerHelper smh;
+        if (smh) {
             // SQLite databases need read/write access (or create for new files)
-            if (!sm->checkFilesystemAccess(dbname, QSEC_READ | QSEC_WRITE | QSEC_CREATE, xsink)) {
+            if (!smh->checkFilesystemAccess(dbname, QSEC_READ | QSEC_WRITE | QSEC_CREATE, xsink)) {
                 return nullptr;
             }
         }
