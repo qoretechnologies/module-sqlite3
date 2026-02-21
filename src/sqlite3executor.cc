@@ -292,7 +292,7 @@ QoreListNode* QoreSqlite3Executor::select_rows(
     }
 
     // Check for interrupt before statement preparation
-    if (qore_check_io_interrupt(xsink)) {
+    if (qore_check_cancel(xsink)) {
         return nullptr;
     }
 
@@ -314,7 +314,7 @@ QoreListNode* QoreSqlite3Executor::select_rows(
 
     while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
         // Check for interrupt periodically during fetch (every 100 rows)
-        if ((row_count % 100) == 0 && qore_check_io_interrupt(xsink)) {
+        if ((row_count % 100) == 0 && qore_check_cancel(xsink)) {
             return nullptr;
         }
         ++row_count;
@@ -356,7 +356,7 @@ QoreHashNode* QoreSqlite3Executor::select_internal(
     }
 
     // Check for interrupt before statement preparation
-    if (qore_check_io_interrupt(xsink)) {
+    if (qore_check_cancel(xsink)) {
         return nullptr;
     }
 
@@ -384,7 +384,7 @@ QoreHashNode* QoreSqlite3Executor::select_internal(
     int row_count = 0;
     while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
         // Check for interrupt periodically during fetch (every 100 rows)
-        if ((row_count % 100) == 0 && qore_check_io_interrupt(xsink)) {
+        if ((row_count % 100) == 0 && qore_check_cancel(xsink)) {
             return nullptr;
         }
         ++row_count;
@@ -423,7 +423,7 @@ int QoreSqlite3PreparedStatement::prepare(const QoreString& sql, const QoreListN
     }
 
     // Check for interrupt before statement preparation
-    if (qore_check_io_interrupt(xsink)) {
+    if (qore_check_cancel(xsink)) {
         return -1;
     }
 
@@ -466,7 +466,7 @@ bool QoreSqlite3PreparedStatement::next(ExceptionSink* xsink) {
     assert(sql_active);
 
     // Check for interrupt before fetching next row
-    if (xsink && qore_check_io_interrupt(xsink)) {
+    if (xsink && qore_check_cancel(xsink)) {
         sql_active = false;
         return false;
     }

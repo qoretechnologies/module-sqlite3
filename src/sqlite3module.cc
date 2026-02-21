@@ -79,7 +79,7 @@ static sqlite3* qore_sqlite3_init(Datasource* ds, ExceptionSink* xsink) {
     ds->setQoreEncoding("utf8");
 
     // Check for interrupt before database open
-    if (qore_check_io_interrupt(xsink)) {
+    if (qore_check_cancel(xsink)) {
         return nullptr;
     }
 
