@@ -135,7 +135,7 @@ int QoreSqlite3ExecBase::bindParameters(sqlite3_stmt* stmt, ExceptionSink* xsink
                 }
                 break;
             case NT_STRING: {
-                const QoreStringNode* s = arg.get<const QoreStringNode>();
+                QoreStringValueHelper s(arg);
                 if (SQLITE_OK != sqlite3_bind_text(stmt, i+1, s->c_str(), s->strlen(), SQLITE_TRANSIENT)) {
                     xsink->raiseException("SQLITE3-BIND-EXCEPTION", "Failed to bind string");
                     return -1;
