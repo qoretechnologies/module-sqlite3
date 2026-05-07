@@ -42,6 +42,7 @@ configure_file(${CMAKE_SOURCE_DIR}/cmake/config.h.cmake config.h)
 set(CPP_SRC
     src/sqlite3connection.cc
     src/sqlite3executor.cc
+    src/sqlite3functions.cc
     src/sqlite3module.cc
 )
 

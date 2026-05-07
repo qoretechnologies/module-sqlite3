@@ -32,6 +32,7 @@
 #include "sqlite3module.h"
 #include "sqlite3connection.h"
 #include "sqlite3executor.h"
+#include "sqlite3functions.h"
 #include "config.h"
 
 static void qore_sqlite3_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink);
@@ -104,6 +105,11 @@ static sqlite3* qore_sqlite3_init(Datasource* ds, ExceptionSink* xsink) {
 
     if (!db) {
         xsink->outOfMemory();
+        return nullptr;
+    }
+
+    if (qore_sqlite3_register_functions(db, xsink)) {
+        sqlite3_close(db);
         return nullptr;
     }
 
