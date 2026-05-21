@@ -32,6 +32,10 @@
 #include "sqlite3module.h"
 #include "sqlite3connection.h"
 #include "sqlite3executor.h"
+
+#ifdef QDBI_METHOD_STMT_FETCH_COLUMNAR
+#include <qore/QoreColumnarResult.h>
+#endif
 #include "sqlite3functions.h"
 #include "config.h"
 
@@ -287,6 +291,29 @@ static QoreHashNode* qore_sqlite3_stmt_fetch_columns(SQLStatement* stmt, int row
     return bg->fetchColumns(rows, xsink);
 }
 
+#ifdef QDBI_METHOD_STMT_FETCH_COLUMNAR
+static QoreColumnarResult* qore_sqlite3_stmt_fetch_columnar(SQLStatement* stmt, int rows, ExceptionSink* xsink) {
+    QoreSqlite3PreparedStatement* bg = (QoreSqlite3PreparedStatement*)stmt->getPrivateData();
+    assert(bg);
+
+    ReferenceHolder<QoreHashNode> columns(bg->fetchColumns(rows, xsink), xsink);
+    if (*xsink || !columns) {
+        return nullptr;
+    }
+
+#ifdef SQLITE_DESCRIBE
+    ReferenceHolder<QoreHashNode> desc(bg->describe(xsink), xsink);
+    if (*xsink) {
+        return nullptr;
+    }
+
+    return QoreColumnarResult::fromColumnHash(*columns, *desc, xsink);
+#else
+    return QoreColumnarResult::fromColumnHash(*columns, nullptr, xsink);
+#endif
+}
+#endif
+
 static QoreHashNode* qore_sqlite3_stmt_describe(SQLStatement* stmt, ExceptionSink* xsink) {
     QoreSqlite3PreparedStatement* bg = (QoreSqlite3PreparedStatement*)stmt->getPrivateData();
     assert(bg);
@@ -338,6 +365,9 @@ static void qore_sqlite3_module_init(QoreModuleInitContext& ctx, ExceptionSink& 
     methods.add(QDBI_METHOD_STMT_FETCH_ROW,         qore_sqlite3_stmt_fetch_row);
     methods.add(QDBI_METHOD_STMT_FETCH_ROWS,        qore_sqlite3_stmt_fetch_rows);
     methods.add(QDBI_METHOD_STMT_FETCH_COLUMNS,     qore_sqlite3_stmt_fetch_columns);
+#ifdef QDBI_METHOD_STMT_FETCH_COLUMNAR
+    methods.add(QDBI_METHOD_STMT_FETCH_COLUMNAR,    qore_sqlite3_stmt_fetch_columnar);
+#endif
     methods.add(QDBI_METHOD_STMT_DESCRIBE,          qore_sqlite3_stmt_describe);
     methods.add(QDBI_METHOD_STMT_NEXT,              qore_sqlite3_stmt_next);
     methods.add(QDBI_METHOD_STMT_CLOSE,             qore_sqlite3_stmt_close);

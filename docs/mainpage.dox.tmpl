@@ -91,6 +91,10 @@ while (*list<hash<auto>> rows = stmt.fetchRows(100)) {
     # Process batch of 100 rows
     map process_row($1), rows;
 }
+
+# Or fetch a column-oriented batch when built with columnar DBI support
+stmt.prepare("select id, name from users where status = %v", "active");
+ColumnarResult columns = stmt.fetchColumnar();
     @endcode
 
     @subsection sqlite3_exceptions Exceptions
@@ -178,6 +182,7 @@ background sub() {
     - added \c DBI_CAP_HAS_STATEMENT capability to properly advertise prepared statement support
     - added GitLab CI configuration with k8s runner support
     - improved documentation with bind placeholder reference and exception documentation
+    - added \c SQLStatement::fetchColumnar() support when built against %Qore with columnar DBI APIs
 
     @subsection sqlite_1_1_0 sqlite3 Driver Version 1.1.0
     - added support for the SQL statement API
