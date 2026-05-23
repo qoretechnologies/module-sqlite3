@@ -33,7 +33,7 @@
 #include "sqlite3connection.h"
 #include "sqlite3executor.h"
 
-#ifdef QDBI_METHOD_STMT_FETCH_COLUMNAR
+#if defined(QDBI_METHOD_STMT_FETCH_COLUMNAR) || defined(QDBI_METHOD_SELECT_COLUMNAR)
 #include <qore/QoreColumnarResult.h>
 #endif
 #include "sqlite3functions.h"
@@ -147,6 +147,79 @@ static QoreValue qore_sqlite3_select(Datasource* ds, const QoreString* qstr, con
     QoreSqlite3Executor exec(d->handler(), d->getEncoding(), xsink);
     return exec.select(ds, qstr, args, xsink);
 }
+
+#ifdef QDBI_METHOD_SELECT_COLUMNAR
+class QoreSqlite3StatementResetHelper {
+public:
+    DLLLOCAL QoreSqlite3StatementResetHelper(QoreSqlite3PreparedStatement& n_stmt, ExceptionSink* n_xsink)
+            : stmt(n_stmt), xsink(n_xsink) {
+    }
+
+    DLLLOCAL ~QoreSqlite3StatementResetHelper() {
+        stmt.reset(xsink);
+    }
+
+private:
+    QoreSqlite3PreparedStatement& stmt;
+    ExceptionSink* xsink;
+};
+
+static QoreColumnarResult* qore_sqlite3_select_columnar(Datasource* ds, const QoreString* qstr,
+        const QoreListNode* args, ExceptionSink* xsink) {
+    checkInit();
+
+    QoreSqlite3PreparedStatement stmt(ds);
+    QoreSqlite3StatementResetHelper reset(stmt, xsink);
+    if (stmt.prepare(*qstr, args, true, xsink)) {
+        return nullptr;
+    }
+    if (args && stmt.bind(*args, xsink)) {
+        return nullptr;
+    }
+    if (stmt.exec(xsink)) {
+        return nullptr;
+    }
+
+    ReferenceHolder<QoreHashNode> columns(stmt.fetchColumns(-1, xsink), xsink);
+    if (*xsink || !columns) {
+        return nullptr;
+    }
+
+#ifdef SQLITE_DESCRIBE
+    ReferenceHolder<QoreHashNode> desc(stmt.describe(xsink), xsink);
+    if (*xsink) {
+        return nullptr;
+    }
+    if (columns->empty()) {
+        if (desc->empty()) {
+            xsink->raiseException("COLUMNAR-RESULT-ERROR",
+                "Datasource::selectColumnar() requires an SQL statement returning result columns");
+            return nullptr;
+        }
+        ConstHashIterator hi(*desc);
+        int column_index = 0;
+        while (hi.next()) {
+            if (column_index && !(column_index % 100) && qore_check_cancel(xsink, "initializing SQLite columnar result")) {
+                return nullptr;
+            }
+            columns->setKeyValue(hi.getKey(), new QoreListNode(autoTypeInfo), xsink);
+            if (*xsink) {
+                return nullptr;
+            }
+            ++column_index;
+        }
+    }
+    return QoreColumnarResult::fromColumnHash(*columns, *desc, xsink);
+#else
+    if (columns->empty()) {
+        xsink->raiseException("COLUMNAR-RESULT-ERROR",
+            "Datasource::selectColumnar() requires an SQL statement returning result columns");
+        return nullptr;
+    }
+    return QoreColumnarResult::fromColumnHash(*columns, nullptr, xsink);
+#endif
+}
+#endif
 
 static QoreValue qore_sqlite3_exec(Datasource* ds, const QoreString* qstr, const QoreListNode *args,
         ExceptionSink* xsink) {
@@ -345,6 +418,9 @@ static void qore_sqlite3_module_init(QoreModuleInitContext& ctx, ExceptionSink& 
     methods.add(QDBI_METHOD_CLOSE,                  qore_sqlite3_close_datasource);
     methods.add(QDBI_METHOD_SELECT,                 qore_sqlite3_select);
     methods.add(QDBI_METHOD_SELECT_ROWS,            qore_sqlite3_select_rows);
+#ifdef QDBI_METHOD_SELECT_COLUMNAR
+    methods.add(QDBI_METHOD_SELECT_COLUMNAR,        qore_sqlite3_select_columnar);
+#endif
     methods.add(QDBI_METHOD_EXEC,                   qore_sqlite3_exec);
 #ifdef _QORE_HAS_DBI_EXECRAW
     methods.add(QDBI_METHOD_EXECRAW,                qore_sqlite3_exec_raw);

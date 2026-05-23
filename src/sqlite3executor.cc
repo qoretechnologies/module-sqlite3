@@ -488,11 +488,21 @@ QoreHashNode* QoreSqlite3PreparedStatement::getOutputHash(ExceptionSink* xsink, 
     assert(stmt);
     assert(sql_active);
     assert(row_count != -1);
-    assert(maxrows > 0);
 
-    int end = row_count + maxrows;
+    int end = maxrows > 0 ? row_count + maxrows : -1;
 
     ReferenceHolder<QoreHashNode> rv(new QoreHashNode(autoTypeInfo), xsink);
+    if (maxrows < 0) {
+        for (int i = 0; i < sqlite3_column_count(stmt); ++i) {
+            if (i && !(i % 100) && qore_check_cancel(xsink, "initializing SQLite columnar result")) {
+                return nullptr;
+            }
+            rv->setKeyValue(sqlite3_column_name(stmt, i), new QoreListNode(autoTypeInfo), xsink);
+            if (*xsink) {
+                return nullptr;
+            }
+        }
+    }
 
     // fetch the results
     while (next(xsink)) {
@@ -503,6 +513,9 @@ QoreHashNode* QoreSqlite3PreparedStatement::getOutputHash(ExceptionSink* xsink, 
         if (rv->empty()) {
             for (int i = 0; i < sqlite3_column_count(stmt); ++i) {
                 rv->setKeyValue(sqlite3_column_name(stmt, i), new QoreListNode(autoTypeInfo), xsink);
+                if (*xsink) {
+                    return nullptr;
+                }
             }
         }
         for (int i = 0; i < sqlite3_column_count(stmt); ++i) {
@@ -510,7 +523,7 @@ QoreHashNode* QoreSqlite3PreparedStatement::getOutputHash(ExceptionSink* xsink, 
             node->push(columnValue(stmt, i), xsink);
         }
 
-        if (row_count == end) {
+        if (maxrows > 0 && row_count == end) {
             break;
         }
     }
@@ -523,9 +536,8 @@ QoreListNode* QoreSqlite3PreparedStatement::getOutputList(ExceptionSink* xsink, 
     assert(stmt);
     assert(sql_active);
     assert(row_count != -1);
-    assert(maxrows > 0);
 
-    int end = row_count + maxrows;
+    int end = maxrows > 0 ? row_count + maxrows : -1;
 
     ReferenceHolder<QoreListNode> rv(new QoreListNode(autoHashTypeInfo), xsink);
     while (next(xsink)) {
@@ -540,7 +552,7 @@ QoreListNode* QoreSqlite3PreparedStatement::getOutputList(ExceptionSink* xsink, 
         }
         rv->push(head.release(), xsink);
 
-        if (row_count == end) {
+        if (maxrows > 0 && row_count == end) {
             break;
         }
     }
