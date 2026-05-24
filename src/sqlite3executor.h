@@ -29,6 +29,8 @@
 
 #include "sqlite3connection.h"
 
+class QoreColumnarResult;
+
 //! Base SQL operation class
 class QoreSqlite3ExecBase {
 public:
@@ -178,6 +180,9 @@ public:
     DLLLOCAL QoreHashNode* fetchRow(ExceptionSink* xsink);
     DLLLOCAL QoreListNode* fetchRows(int rows, ExceptionSink* xsink);
     DLLLOCAL QoreHashNode* fetchColumns(int rows, ExceptionSink* xsink);
+#if defined(QDBI_METHOD_SELECT_COLUMNAR) || defined(QDBI_METHOD_STMT_FETCH_COLUMNAR)
+    DLLLOCAL QoreColumnarResult* fetchColumnar(int rows, ExceptionSink* xsink);
+#endif
     DLLLOCAL QoreHashNode* describe(ExceptionSink* xsink);
     DLLLOCAL bool next(ExceptionSink* xsink = nullptr);
 

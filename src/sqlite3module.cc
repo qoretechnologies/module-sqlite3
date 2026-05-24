@@ -180,44 +180,7 @@ static QoreColumnarResult* qore_sqlite3_select_columnar(Datasource* ds, const Qo
         return nullptr;
     }
 
-    ReferenceHolder<QoreHashNode> columns(stmt.fetchColumns(-1, xsink), xsink);
-    if (*xsink || !columns) {
-        return nullptr;
-    }
-
-#ifdef SQLITE_DESCRIBE
-    ReferenceHolder<QoreHashNode> desc(stmt.describe(xsink), xsink);
-    if (*xsink) {
-        return nullptr;
-    }
-    if (columns->empty()) {
-        if (desc->empty()) {
-            xsink->raiseException("COLUMNAR-RESULT-ERROR",
-                "Datasource::selectColumnar() requires an SQL statement returning result columns");
-            return nullptr;
-        }
-        ConstHashIterator hi(*desc);
-        int column_index = 0;
-        while (hi.next()) {
-            if (column_index && !(column_index % 100) && qore_check_cancel(xsink, "initializing SQLite columnar result")) {
-                return nullptr;
-            }
-            columns->setKeyValue(hi.getKey(), new QoreListNode(autoTypeInfo), xsink);
-            if (*xsink) {
-                return nullptr;
-            }
-            ++column_index;
-        }
-    }
-    return QoreColumnarResult::fromColumnHash(*columns, *desc, xsink);
-#else
-    if (columns->empty()) {
-        xsink->raiseException("COLUMNAR-RESULT-ERROR",
-            "Datasource::selectColumnar() requires an SQL statement returning result columns");
-        return nullptr;
-    }
-    return QoreColumnarResult::fromColumnHash(*columns, nullptr, xsink);
-#endif
+    return stmt.fetchColumnar(-1, xsink);
 }
 #endif
 
@@ -369,21 +332,7 @@ static QoreColumnarResult* qore_sqlite3_stmt_fetch_columnar(SQLStatement* stmt, 
     QoreSqlite3PreparedStatement* bg = (QoreSqlite3PreparedStatement*)stmt->getPrivateData();
     assert(bg);
 
-    ReferenceHolder<QoreHashNode> columns(bg->fetchColumns(rows, xsink), xsink);
-    if (*xsink || !columns) {
-        return nullptr;
-    }
-
-#ifdef SQLITE_DESCRIBE
-    ReferenceHolder<QoreHashNode> desc(bg->describe(xsink), xsink);
-    if (*xsink) {
-        return nullptr;
-    }
-
-    return QoreColumnarResult::fromColumnHash(*columns, *desc, xsink);
-#else
-    return QoreColumnarResult::fromColumnHash(*columns, nullptr, xsink);
-#endif
+    return bg->fetchColumnar(rows, xsink);
 }
 #endif
 

@@ -22,6 +22,247 @@
 
 #include "sqlite3executor.h"
 
+#if defined(QDBI_METHOD_SELECT_COLUMNAR) || defined(QDBI_METHOD_STMT_FETCH_COLUMNAR)
+#include <qore/QoreBufferNode.h>
+#include <qore/QoreColumnarResult.h>
+
+#include <memory>
+#include <string>
+#include <vector>
+#endif
+
+#if defined(QDBI_METHOD_SELECT_COLUMNAR) || defined(QDBI_METHOD_STMT_FETCH_COLUMNAR)
+namespace {
+struct SqliteColumnarStorage {
+    std::vector<int64> int_values;
+    std::vector<double> float_values;
+    std::vector<uint8_t> validity;
+};
+
+static size_t sqlite_columnar_bitmap_size(size_t size) {
+    return (size + 7) / 8;
+}
+
+static void sqlite_columnar_set_validity_bit(std::vector<uint8_t>& validity, size_t index, bool valid) {
+    size_t byte = index / 8;
+    if (byte >= validity.size()) {
+        validity.resize(byte + 1, 0);
+    }
+
+    uint8_t mask = uint8_t(1) << (index % 8);
+    if (valid) {
+        validity[byte] |= mask;
+    } else {
+        validity[byte] &= ~mask;
+    }
+}
+
+static bool sqlite_columnar_is_valid(const std::vector<uint8_t>& validity, size_t index) {
+    if (validity.empty()) {
+        return true;
+    }
+    size_t byte = index / 8;
+    return byte < validity.size() && (validity[byte] & (uint8_t(1) << (index % 8)));
+}
+
+enum class SqliteColumnarKind {
+    Empty,
+    Int64,
+    Float64,
+    List,
+};
+
+class SqliteColumnarBuilder {
+public:
+    SqliteColumnarBuilder(const char* n_name, ExceptionSink* xsink) : name(n_name), list(xsink) {
+    }
+
+    const char* getName() const {
+        return name.c_str();
+    }
+
+    int append(sqlite3_stmt* stmt, int column_index, ExceptionSink* xsink) {
+        int type = sqlite3_column_type(stmt, column_index);
+        if (kind == SqliteColumnarKind::List) {
+            return appendList(stmt, column_index, xsink);
+        }
+
+        if (type == SQLITE_NULL) {
+            appendNull();
+            return 0;
+        }
+
+        switch (type) {
+            case SQLITE_INTEGER:
+                if (kind == SqliteColumnarKind::Empty) {
+                    initDense(SqliteColumnarKind::Int64);
+                } else if (kind != SqliteColumnarKind::Int64) {
+                    if (fallbackToList(xsink)) {
+                        return -1;
+                    }
+                    return appendList(stmt, column_index, xsink);
+                }
+                storage->int_values.push_back(sqlite3_column_int64(stmt, column_index));
+                appendValid();
+                return 0;
+
+            case SQLITE_FLOAT:
+                if (kind == SqliteColumnarKind::Empty) {
+                    initDense(SqliteColumnarKind::Float64);
+                } else if (kind != SqliteColumnarKind::Float64) {
+                    if (fallbackToList(xsink)) {
+                        return -1;
+                    }
+                    return appendList(stmt, column_index, xsink);
+                }
+                storage->float_values.push_back(sqlite3_column_double(stmt, column_index));
+                appendValid();
+                return 0;
+
+            default:
+                if (fallbackToList(xsink)) {
+                    return -1;
+                }
+                return appendList(stmt, column_index, xsink);
+        }
+    }
+
+    QoreValue finish(ExceptionSink* xsink) {
+        if (kind == SqliteColumnarKind::List) {
+            return list.release();
+        }
+        if (kind == SqliteColumnarKind::Empty) {
+            ReferenceHolder<QoreListNode> rv(new QoreListNode(autoTypeInfo), xsink);
+            for (size_t i = 0; i < row_count; ++i) {
+                if (i && !(i % 100) && qore_check_cancel(xsink)) {
+                    return QoreValue();
+                }
+                rv->push(null(), xsink);
+                if (*xsink) {
+                    return QoreValue();
+                }
+            }
+            return rv.release();
+        }
+
+        assert(storage);
+        QoreBufferElementType element_type = kind == SqliteColumnarKind::Float64
+            ? QoreBufferElementType::Float64
+            : QoreBufferElementType::Int64;
+        const void* data = element_type == QoreBufferElementType::Float64
+            ? static_cast<const void*>(storage->float_values.empty() ? nullptr : storage->float_values.data())
+            : static_cast<const void*>(storage->int_values.empty() ? nullptr : storage->int_values.data());
+        bool nullable = null_count > 0;
+        const uint8_t* validity = nullable && !storage->validity.empty() ? storage->validity.data() : nullptr;
+        return QoreBufferNode::wrapExternalStorage(element_type, nullable, row_count, data, validity, storage,
+            null_count, xsink);
+    }
+
+private:
+    void initDense(SqliteColumnarKind n_kind) {
+        assert(kind == SqliteColumnarKind::Empty);
+        kind = n_kind;
+        storage.reset(new SqliteColumnarStorage);
+        if (!row_count) {
+            return;
+        }
+
+        storage->validity.resize(sqlite_columnar_bitmap_size(row_count), 0);
+        if (kind == SqliteColumnarKind::Float64) {
+            storage->float_values.resize(row_count, 0.0);
+        } else {
+            storage->int_values.resize(row_count, 0);
+        }
+    }
+
+    void ensureValidity() {
+        assert(storage);
+        if (!storage->validity.empty()) {
+            storage->validity.resize(sqlite_columnar_bitmap_size(row_count + 1), 0);
+            return;
+        }
+
+        storage->validity.resize(sqlite_columnar_bitmap_size(row_count + 1), 0xff);
+    }
+
+    void appendNull() {
+        if (kind == SqliteColumnarKind::Empty) {
+            ++null_count;
+            ++row_count;
+            return;
+        }
+
+        ensureValidity();
+        sqlite_columnar_set_validity_bit(storage->validity, row_count, false);
+        if (kind == SqliteColumnarKind::Float64) {
+            storage->float_values.push_back(0.0);
+        } else {
+            storage->int_values.push_back(0);
+        }
+        ++null_count;
+        ++row_count;
+    }
+
+    void appendValid() {
+        if (storage && !storage->validity.empty()) {
+            sqlite_columnar_set_validity_bit(storage->validity, row_count, true);
+        }
+        ++row_count;
+    }
+
+    int fallbackToList(ExceptionSink* xsink) {
+        if (kind == SqliteColumnarKind::List) {
+            return 0;
+        }
+
+        list = new QoreListNode(autoTypeInfo);
+        for (size_t i = 0; i < row_count; ++i) {
+            if (i && !(i % 100) && qore_check_cancel(xsink)) {
+                return -1;
+            }
+
+            if (kind == SqliteColumnarKind::Empty || !sqlite_columnar_is_valid(storage->validity, i)) {
+                list->push(null(), xsink);
+            } else if (kind == SqliteColumnarKind::Float64) {
+                list->push(storage->float_values[i], xsink);
+            } else {
+                list->push(storage->int_values[i], xsink);
+            }
+            if (*xsink) {
+                return -1;
+            }
+        }
+
+        kind = SqliteColumnarKind::List;
+        storage.reset();
+        null_count = 0;
+        return 0;
+    }
+
+    int appendList(sqlite3_stmt* stmt, int column_index, ExceptionSink* xsink) {
+        ValueHolder value(QoreSqlite3ExecBase::columnValue(stmt, column_index), xsink);
+        if (*xsink) {
+            return -1;
+        }
+
+        list->push(value.release(), xsink);
+        if (*xsink) {
+            return -1;
+        }
+        ++row_count;
+        return 0;
+    }
+
+    std::string name;
+    SqliteColumnarKind kind = SqliteColumnarKind::Empty;
+    std::shared_ptr<SqliteColumnarStorage> storage;
+    ReferenceHolder<QoreListNode> list;
+    size_t row_count = 0;
+    int64_t null_count = 0;
+};
+}
+#endif
+
 int QoreSqlite3ExecBase::parseForBind(QoreString& str, const QoreListNode* args, ExceptionSink* xsink) {
     char quote = 0;
     const char *p = str.c_str();
@@ -612,6 +853,75 @@ QoreHashNode* QoreSqlite3PreparedStatement::fetchColumns(int rows, ExceptionSink
 
     return getOutputHash(xsink, rows);
 }
+
+#if defined(QDBI_METHOD_SELECT_COLUMNAR) || defined(QDBI_METHOD_STMT_FETCH_COLUMNAR)
+QoreColumnarResult* QoreSqlite3PreparedStatement::fetchColumnar(int rows, ExceptionSink* xsink) {
+    assert(sql);
+    assert(stmt);
+
+    if (!sql_active) {
+        xsink->raiseException("SQLITE3-FETCH-COLUMNAR-ERROR", "SQL statement is inactive or has reached the end of "
+            "the result set");
+        return nullptr;
+    }
+
+    if (row_count == -1) {
+        row_count = 0;
+    }
+
+    int end = rows > 0 ? row_count + rows : -1;
+    int column_count = sqlite3_column_count(stmt);
+
+    std::vector<std::unique_ptr<SqliteColumnarBuilder>> builders;
+    builders.reserve(column_count);
+    for (int i = 0; i < column_count; ++i) {
+        if (i && !(i % 100) && qore_check_cancel(xsink, "initializing SQLite columnar result")) {
+            return nullptr;
+        }
+        builders.emplace_back(new SqliteColumnarBuilder(sqlite3_column_name(stmt, i), xsink));
+    }
+
+    while (next(xsink)) {
+        if (*xsink) {
+            return nullptr;
+        }
+
+        for (int i = 0; i < column_count; ++i) {
+            if (i && !(i % 100) && qore_check_cancel(xsink, "fetching SQLite columnar row")) {
+                return nullptr;
+            }
+            if (builders[i]->append(stmt, i, xsink)) {
+                return nullptr;
+            }
+        }
+
+        if (rows > 0 && row_count == end) {
+            break;
+        }
+    }
+
+    ReferenceHolder<QoreHashNode> columns(new QoreHashNode(autoTypeInfo), xsink);
+    for (int i = 0; i < column_count; ++i) {
+        if (i && !(i % 100) && qore_check_cancel(xsink, "finalizing SQLite columnar result")) {
+            return nullptr;
+        }
+        columns->setKeyValue(builders[i]->getName(), builders[i]->finish(xsink), xsink);
+        if (*xsink) {
+            return nullptr;
+        }
+    }
+
+#ifdef SQLITE_DESCRIBE
+    ReferenceHolder<QoreHashNode> desc(describe(xsink), xsink);
+    if (*xsink) {
+        return nullptr;
+    }
+    return QoreColumnarResult::fromColumnHash(*columns, *desc, xsink);
+#else
+    return QoreColumnarResult::fromColumnHash(*columns, nullptr, xsink);
+#endif
+}
+#endif
 
 int QoreSqlite3PreparedStatement::rowsAffected() {
     return sqlite3_changes(conn->handler());

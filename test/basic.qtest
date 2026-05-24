@@ -132,9 +132,13 @@ class Sqlite3BasicTest inherits QUnit::Test {
 
         {
             ColumnarResult columns = ds.selectColumnar(
-                "select id, txt, int, blb, bol from foo where id <= %v order by id", 3);
+                "select id, txt, int, dbl, blb, bol from foo where id <= %v order by id", 3);
             assertEq(3, columns.numRows());
-            assertEq(5, columns.numCols());
+            assertEq(6, columns.numCols());
+            assertEq("buffer<int64>", columns.getColumn("id").fullType());
+            assertEq("buffer<int64>", columns.getColumn("int").fullType());
+            assertEq("buffer<float64>", columns.getColumn("dbl").fullType());
+            assertEq("buffer<int64>", columns.getColumn("bol").fullType());
             assertEq((1, 2, 3), columns.getColumn("id").toList());
             assertEq(("lorem ipsum", "lorem ipsum", "lorem ipsum"), columns.getColumn("txt").toList());
             assertEq(dat, columns.getColumn("blb")[0]);
@@ -202,11 +206,15 @@ class Sqlite3BasicTest inherits QUnit::Test {
             AbstractSQLStatement stmt = ds.getSQLStatement();
             on_error stmt.rollback();
             on_success stmt.commit();
-            stmt.prepare("select id, txt, int, blb, bol from foo order by id");
+            stmt.prepare("select id, txt, int, dbl, blb, bol from foo order by id");
             stmt.exec();
             ColumnarResult columns = stmt.fetchColumnar(rows: -1);
             assertEq(50, columns.numRows());
-            assertEq(5, columns.numCols());
+            assertEq(6, columns.numCols());
+            assertEq("buffer<int64>", columns.getColumn("id").fullType());
+            assertEq("buffer<int64>", columns.getColumn("int").fullType());
+            assertEq("buffer<float64>", columns.getColumn("dbl").fullType());
+            assertEq("buffer<int64>", columns.getColumn("bol").fullType());
             assertEq(1, columns.getColumn("id")[0]);
             assertEq(2, columns.getColumn("id")[1]);
             assertEq(3, columns.getColumn("id")[2]);

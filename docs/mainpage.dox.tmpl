@@ -97,6 +97,12 @@ stmt.prepare("select id, name from users where status = %v", "active");
 ColumnarResult columns = stmt.fetchColumnar();
     @endcode
 
+    Columnar DBI results return homogeneous runtime integer columns as dense
+    \c buffer<int64> values and homogeneous runtime floating-point columns as
+    dense \c buffer<float64> values. SQLite permits dynamic per-row types, so
+    mixed-type, text, blob, and all-null columns use the standard list-backed
+    columnar representation.
+
     @subsection sqlite3_exceptions Exceptions
 
     The sqlite3 driver can throw the following exceptions:
@@ -183,6 +189,8 @@ background sub() {
     - added GitLab CI configuration with k8s runner support
     - improved documentation with bind placeholder reference and exception documentation
     - added \c SQLStatement::fetchColumnar() support when built against %Qore with columnar DBI APIs
+    - optimized columnar DBI results to return dense buffers for homogeneous integer and
+      floating-point result columns
 
     @subsection sqlite_1_1_0 sqlite3 Driver Version 1.1.0
     - added support for the SQL statement API
