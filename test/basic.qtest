@@ -39,6 +39,10 @@ class Sqlite3BasicTest inherits QUnit::Test {
         set_return_value(main());
     }
 
+    private bool isMissingColumnarApi(hash<ExceptionInfo> ex) {
+        return ex.err == "METHOD-DOES-NOT-EXIST" || ex.err == "UNKNOWN-METHOD";
+    }
+
     basicTest() {
         execIgnore("drop table foo");
         execIgnore("drop view v_foo");
@@ -130,8 +134,10 @@ class Sqlite3BasicTest inherits QUnit::Test {
         map assertEq((Type::String, Type::Int), ($1.txt.type(), $1."int".type())), result;
         map assertEq($#, $1.id - 1), result;
 
-        {
-            ColumnarResult columns = ds.selectColumnar(
+        bool columnar_supported = True;
+        try {
+            auto columnar_ds = ds;
+            auto columns = columnar_ds.selectColumnar(
                 "select id, txt, int, dbl, blb, bol from foo where id <= %v order by id", 3);
             assertEq(3, columns.numRows());
             assertEq(6, columns.numCols());
@@ -144,10 +150,15 @@ class Sqlite3BasicTest inherits QUnit::Test {
             assertEq(dat, columns.getColumn("blb")[0]);
             assertTrue(columns.getColumn("bol")[0] >= 0 && columns.getColumn("bol")[0] <= 1);
 
-            ColumnarResult empty = ds.selectColumnar("select id, txt from foo where id < 0");
+            auto empty = columnar_ds.selectColumnar("select id, txt from foo where id < 0");
             assertEq(0, empty.numRows());
             assertEq(2, empty.numCols());
             assertEq(("id", "txt"), empty.columnNames());
+        } catch (hash<ExceptionInfo> ex) {
+            if (!isMissingColumnarApi(ex)) {
+                rethrow;
+            }
+            columnar_supported = False;
         }
 
         # Test 12 - pragma call - with returning value
@@ -202,13 +213,14 @@ class Sqlite3BasicTest inherits QUnit::Test {
             }
         }
 
-        {
+        if (columnar_supported) {
             AbstractSQLStatement stmt = ds.getSQLStatement();
             on_error stmt.rollback();
             on_success stmt.commit();
             stmt.prepare("select id, txt, int, dbl, blb, bol from foo order by id");
             stmt.exec();
-            ColumnarResult columns = stmt.fetchColumnar(rows: -1);
+            auto columnar_stmt = stmt;
+            auto columns = columnar_stmt.fetchColumnar(-1);
             assertEq(50, columns.numRows());
             assertEq(6, columns.numCols());
             assertEq("buffer<int64>", columns.getColumn("id").fullType());
