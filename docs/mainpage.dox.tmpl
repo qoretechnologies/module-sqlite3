@@ -79,6 +79,10 @@ on_success stmt.commit();
 # Prepare and execute
 stmt.prepare("select id, name from users where status = %v", "active");
 
+# Result metadata is available before execution; aliases retain their exact spelling.
+hash<auto> desc = stmt.describe();
+printf("id type: %s, name type: %s\n", desc.id.native_type, desc.name.native_type);
+
 # Fetch rows one at a time
 while (stmt.next()) {
     hash<auto> row = stmt.fetchRow();
@@ -122,7 +126,6 @@ ColumnarResult columns = stmt.fetchColumnar();
     |\c SQLITE3-FETCH-ROW-ERROR|Raised when fetching a row fails (e.g., next() not called)
     |\c SQLITE3-FETCH-ROWS-ERROR|Raised when fetching rows fails (statement inactive)
     |\c SQLITE3-FETCH-COLUMNS-ERROR|Raised when fetching columns fails (statement inactive)
-    |\c SQLITE3-DESCRIBE-ERROR|Raised when describe() is called (not supported)
     |\c SQLITE3-GET-OUTPUT-ERROR|Raised when getOutput() is called (stored procedures not supported)
     |\c SQLITE3-GET-OUTPUT-ROWS-ERROR|Raised when getOutputRows() is called (stored procedures not supported)
     |\c SQLITE3-BIND-PLACEHOLDERS-ERROR|Raised when bindPlaceholders() is called (not supported)
@@ -173,6 +176,9 @@ background sub() {
 
     @section sqlite3releasenotes Release Notes
 
+    - added pre-execution \c SQLStatement::describe() support using declared SQLite column types and affinity;
+      result aliases are preserved exactly, expressions without declared types are reported as unknown, and
+      nullability is conservatively reported because SQLite does not expose it through statement metadata
     - fixed prepared-statement \c bind() calls to replace values captured by \c prepare(), so
       \c prepare(sql) followed by \c bind(values) no longer binds NULL placeholders
 

@@ -187,6 +187,14 @@ class Sqlite3BasicTest inherits QUnit::Test {
             on_error stmt.rollback();
             on_success stmt.commit();
             stmt.prepare("select id, txt, blb, bol from foo where id = 6");
+            hash<auto> desc = stmt.describe();
+            assertEq(("blb", "bol", "id", "txt"), sort(desc.keys()));
+            assertEq(NT_INT, desc.id.type);
+            assertEq("INTEGER", desc.id.native_type);
+            assertEq(NT_STRING, desc.txt.type);
+            assertEq("TEXT", desc.txt.native_type);
+            assertEq(NT_BINARY, desc.blb.type);
+            assertTrue(desc.id.nullable);
             assertEq(True, stmt.next());
             assertEq({
                 "id": 6,
@@ -194,6 +202,21 @@ class Sqlite3BasicTest inherits QUnit::Test {
                 "blb": dat,
                 "bol": 0,
             }, stmt.fetchRow());
+        }
+
+        {
+            AbstractSQLStatement stmt = ds.getSQLStatement();
+            on_error stmt.rollback();
+            on_success stmt.commit();
+            stmt.prepare("select id as RecordID, id + 1 as ComputedValue from foo where id = 6");
+            hash<auto> desc = stmt.describe();
+            assertEq(("ComputedValue", "RecordID"), sort(desc.keys()));
+            assertEq("RecordID", desc.RecordID.name);
+            assertEq(NT_INT, desc.RecordID.type);
+            assertEq(-1, desc.ComputedValue.type);
+            assertEq("unknown", desc.ComputedValue.native_type);
+            assertEq(True, stmt.next());
+            assertEq({"RecordID": 6, "ComputedValue": 7}, stmt.fetchRow());
         }
 
         {

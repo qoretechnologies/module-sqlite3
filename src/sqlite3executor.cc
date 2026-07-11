@@ -27,9 +27,12 @@
 #include <qore/QoreColumnarResult.h>
 
 #include <memory>
-#include <string>
 #include <vector>
 #endif
+
+#include <algorithm>
+#include <cctype>
+#include <string>
 
 #if defined(QDBI_METHOD_SELECT_COLUMNAR) || defined(QDBI_METHOD_STMT_FETCH_COLUMNAR)
 namespace {
@@ -958,15 +961,11 @@ QoreColumnarResult* QoreSqlite3PreparedStatement::fetchColumnar(int rows, Except
         }
     }
 
-#ifdef SQLITE_DESCRIBE
     ReferenceHolder<QoreHashNode> desc(describe(xsink), xsink);
     if (*xsink) {
         return nullptr;
     }
     return QoreColumnarResult::fromColumnHash(*columns, *desc, xsink);
-#else
-    return QoreColumnarResult::fromColumnHash(*columns, nullptr, xsink);
-#endif
 }
 #endif
 
@@ -975,7 +974,6 @@ int QoreSqlite3PreparedStatement::rowsAffected() {
 }
 
 QoreHashNode* QoreSqlite3PreparedStatement::describe(ExceptionSink* xsink) {
-#ifdef SQLITE_DESCRIBE
     // set up hash for row
     ReferenceHolder<QoreHashNode> h(new QoreHashNode(autoTypeInfo), xsink);
     QoreString namestr("name");
@@ -983,56 +981,62 @@ QoreHashNode* QoreSqlite3PreparedStatement::describe(ExceptionSink* xsink) {
     QoreString typestr("type");
     QoreString dbtypestr("native_type");
     QoreString internalstr("internal_id");
+    QoreString nullablestr("nullable");
 
     for (int i = 0, e = sqlite3_column_count(stmt); i < e; ++i) {
+        if (i && !(i % 100) && qore_check_cancel(xsink)) {
+            return nullptr;
+        }
         const char* column_name = sqlite3_column_name(stmt, i);
-        int ctype = sqlite3_column_type(stmt, i);
+        const char* declared_type = sqlite3_column_decltype(stmt, i);
+        std::string normalized_type = declared_type ? declared_type : "";
+        std::transform(normalized_type.begin(), normalized_type.end(), normalized_type.begin(),
+            [](unsigned char c) { return std::toupper(c); });
 
         ReferenceHolder<QoreHashNode> col(new QoreHashNode(autoTypeInfo), xsink);
         col->setKeyValue(namestr, new QoreStringNode(column_name), xsink);
-        col->setKeyValue(internalstr, ctype, xsink);
 
-        const char* stype;
-        qore_type_t qtype;
-        switch (ctype) {
-            case SQLITE_INTEGER:
-                stype = "int";
-                qtype = NT_INT;
-                break;
-
-            case SQLITE_FLOAT:
-                stype = "float";
-                qtype = NT_FLOAT;
-                break;
-
-            case SQLITE_BLOB:
-                stype = "blob";
+        // SQLite uses dynamic typing, but sqlite3_column_decltype() exposes the declared type for direct table
+        // columns without stepping (and therefore without consuming) the statement.  Apply SQLite's documented
+        // affinity rules to provide the closest Qore type; expressions without a declared type remain untyped.
+        const char* native_type = declared_type ? declared_type : "unknown";
+        qore_type_t qtype = -1;
+        int affinity = SQLITE_NULL;
+        if (normalized_type.find("INT") != std::string::npos) {
+            qtype = NT_INT;
+            affinity = SQLITE_INTEGER;
+        } else if (normalized_type.find("CHAR") != std::string::npos
+                || normalized_type.find("CLOB") != std::string::npos
+                || normalized_type.find("TEXT") != std::string::npos) {
+            qtype = NT_STRING;
+            affinity = SQLITE_TEXT;
+        } else if (normalized_type.empty() || normalized_type.find("BLOB") != std::string::npos) {
+            if (!normalized_type.empty()) {
                 qtype = NT_BINARY;
-                break;
-
-            case SQLITE_TEXT:
-                stype = "text";
-                qtype = NT_STRING;
-                break;
-
-            default:
-                stype = "unknown";
-                qtype = -1;
-                break;
-        };
+                affinity = SQLITE_BLOB;
+            }
+        } else if (normalized_type.find("REAL") != std::string::npos
+                || normalized_type.find("FLOA") != std::string::npos
+                || normalized_type.find("DOUB") != std::string::npos) {
+            qtype = NT_FLOAT;
+            affinity = SQLITE_FLOAT;
+        } else {
+            qtype = NT_NUMBER;
+            affinity = SQLITE_FLOAT;
+        }
 
         col->setKeyValue(typestr, qtype, xsink);
-        col->setKeyValue(dbtypestr, new QoreStringNode(stype), xsink);
+        col->setKeyValue(dbtypestr, new QoreStringNode(native_type), xsink);
         col->setKeyValue(maxsizestr, -1, xsink);
+        col->setKeyValue(internalstr, affinity, xsink);
+        // SQLite does not expose result-column nullability through the statement metadata API.  Conservatively
+        // advertise nullable columns so consumers do not reject valid NULL results.
+        col->setKeyValue(nullablestr, true, xsink);
 
         h->setKeyValue(column_name, col.release(), xsink);
     }
 
     return h.release();
-#else
-    xsink->raiseException("SQLITE3-DESCRIBE-ERROR", "SQLStatement::describe() is not supported");
-    return nullptr;
-#endif
 }
 
 void QoreSqlite3PreparedStatement::reset(ExceptionSink* xsink) {
