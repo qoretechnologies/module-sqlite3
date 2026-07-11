@@ -258,9 +258,40 @@ class Sqlite3BasicTest inherits QUnit::Test {
             on_error stmt.rollback();
             on_success stmt.commit();
             stmt.prepare("update foo set int = %v where id = 1");
-            stmt.bind(rand());
+            int value = 424242;
+            stmt.bind(value);
             stmt.exec();
             assertEq(1, stmt.affectedRows());
+            assertEq(value, ds.selectRow("select int from foo where id = 1")."int");
+        }
+
+        {
+            AbstractSQLStatement stmt = ds.getSQLStatement();
+            on_error stmt.rollback();
+            on_success stmt.commit();
+            stmt.prepare("select id from foo where id = %v");
+            stmt.bind(6);
+            stmt.exec();
+            assertTrue(stmt.next());
+            assertEq(6, stmt.fetchRow().id);
+            assertFalse(stmt.next());
+
+            stmt.bind(7);
+            stmt.exec();
+            assertTrue(stmt.next());
+            assertEq(7, stmt.fetchRow().id);
+            assertFalse(stmt.next());
+        }
+
+        {
+            AbstractSQLStatement stmt = ds.getSQLStatement();
+            on_error stmt.rollback();
+            on_success stmt.commit();
+            stmt.prepare("select id from foo where id = %v", 8);
+            stmt.exec();
+            assertTrue(stmt.next());
+            assertEq(8, stmt.fetchRow().id);
+            assertFalse(stmt.next());
         }
 
         ds.rollback();

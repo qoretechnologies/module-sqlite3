@@ -675,17 +675,32 @@ int QoreSqlite3PreparedStatement::prepare(const QoreString& sql, const QoreListN
         return -1;
     }
 
+    if (sqlite3_bind_parameter_count(stmt) && bindParameters(stmt, xsink)) {
+        xsink->raiseException("SQLITE3-PREPARE-ERROR", "failed to bind variables");
+        return -1;
+    }
+
     return 0;
 }
 
 int QoreSqlite3PreparedStatement::bind(const QoreListNode& l, ExceptionSink* xsink) {
     assert(stmt);
 
-    if (m_realArgs && m_realArgs->size() && bindParameters(stmt, xsink)) {
-        xsink->raiseException("SQLITE3-STATEMENT-BIND-ERROR", "failed to bind variables");
+    int rc = sqlite3_reset(stmt);
+    if (rc != SQLITE_OK) {
+        xsink->raiseException("SQLITE3-STATEMENT-BIND-ERROR", "failed to reset statement before binding: %s",
+            sqlite3_errmsg(conn->handler()));
         return -1;
     }
 
+    // parseForBind() records the arguments supplied to prepare(); replace them with the values supplied to bind().
+    // Without this assignment, prepare(sql) followed by bind(values) keeps the NOTHING placeholders captured during
+    // prepare and silently binds NULL instead of the caller's values.
+    m_realArgs = l.copy();
+    if (sqlite3_bind_parameter_count(stmt) && bindParameters(stmt, xsink)) {
+        xsink->raiseException("SQLITE3-STATEMENT-BIND-ERROR", "failed to bind variables");
+        return -1;
+    }
     return 0;
 }
 
@@ -695,6 +710,38 @@ int QoreSqlite3PreparedStatement::exec(ExceptionSink* xsink) {
     assert(!sql_active);
     if (!conn->begin(xsink)) {
         return -1;
+    }
+    int rc = sqlite3_reset(stmt);
+    if (rc != SQLITE_OK) {
+        xsink->raiseException("SQLITE3-STATEMENT-EXEC-ERROR", "failed to reset statement before execution: %s",
+            sqlite3_errmsg(conn->handler()));
+        return -1;
+    }
+    row_count = -1;
+
+    // DML and DDL statements without results must be stepped by exec(); result-producing statements are stepped lazily
+    // by next() and the fetch APIs. When count_changes is enabled, ordinary DML exposes one synthetic result column;
+    // consume that result here while preserving actual RETURNING clauses and result-producing pragmas.
+    int column_count = sqlite3_column_count(stmt);
+    bool count_changes_result = false;
+    if (!sqlite3_stmt_readonly(stmt) && column_count == 1) {
+        const char* name = sqlite3_column_name(stmt, 0);
+        count_changes_result = name && (!strcmp(name, "rows inserted") || !strcmp(name, "rows updated")
+            || !strcmp(name, "rows deleted"));
+    }
+    if (!column_count || count_changes_result) {
+        do {
+            if (qore_check_cancel(xsink, "executing SQLite statement")) {
+                return -1;
+            }
+            rc = sqlite3_step(stmt);
+        } while (rc == SQLITE_ROW);
+        if (rc != SQLITE_DONE) {
+            xsink->raiseException("SQLITE3-STATEMENT-EXEC-ERROR", "sqlite3 error: %s",
+                sqlite3_errmsg(conn->handler()));
+            return -1;
+        }
+        return 0;
     }
     sql_active = true;
     return 0;

@@ -173,6 +173,9 @@ background sub() {
 
     @section sqlite3releasenotes Release Notes
 
+    - fixed prepared-statement \c bind() calls to replace values captured by \c prepare(), so
+      \c prepare(sql) followed by \c bind(values) no longer binds NULL placeholders
+
     @subsection sqlite_1_2_0 sqlite3 Driver Version 1.2.0
     - added support for interruptible I/O for graceful termination of sandboxed programs; interrupt
       checks are performed before database open, statement preparation, and periodically during fetch
