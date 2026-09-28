@@ -29,3 +29,13 @@ docs/sqlite3/
 .idea/
 .vscode/
 *.swp
+
+# Debian package build output
+obj-*/
+debian/.debhelper/
+debian/debhelper-build-stamp
+debian/files
+debian/*.substvars
+debian/qore-sqlite3-module/
+debian/qore-sqlite3-module-doc/
+debian/tmp/

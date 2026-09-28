@@ -1,0 +1,6 @@
+qore-sqlite3-module (1.2.0~git20260928.1-0qore1~ubuntu26.04) resolute; urgency=medium
+
+  * Package the DBI driver, documentation and debug symbols.
+  * Check database operations and installed runtime/compiler integration.
+
+ -- David Nichols <david@qore.org>  Mon, 28 Sep 2026 20:50:52 -0000

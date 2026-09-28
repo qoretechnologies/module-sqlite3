@@ -1,0 +1,3 @@
+test/basic.qtest
+test/blob.png
+test/sqlite3test-threading.q

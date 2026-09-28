@@ -1,0 +1,9 @@
+Document: qore-sqlite3-module
+Title: Qore SQLite3 Module Reference
+Author: Qore Technologies, s.r.o.
+Abstract: API reference for using SQLite databases through Qore DBI.
+Section: Programming
+
+Format: HTML
+Index: /usr/share/doc/qore-sqlite3-module-doc/html/index.html
+Files: /usr/share/doc/qore-sqlite3-module-doc/html/*.html

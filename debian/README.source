@@ -1,0 +1,69 @@
+Debian/Ubuntu packaging for the sqlite3 module
+=============================================
+
+The native DBI driver belongs to qore-sqlite3-module.
+HTML documentation and the upstream example test belong to the optional
+qore-sqlite3-module-doc package. Debhelper creates matching debug symbols.
+
+Build prerequisites and supported scope
+--------------------------------------
+
+Use an isolated native build environment containing the packaged Qore runtime
+and libqore-dev, then install the Build-Depends from debian/control. The current
+qualification target is Ubuntu 26.04 amd64 with Qore 3.0 development packages.
+Other Debian/Ubuntu releases and architectures need their own qualified SDK
+and native build/test run. Cross builds are rejected because Qore executes
+during the build. The system libsqlite3-dev package is required; no SQLite
+implementation is bundled. No database server or credentials are required.
+
+The build uses distribution compiler/hardening flags. Native Qore modules
+resolve Qore symbols at load time without linking libqore. debian/rules derives
+a minimum runtime and libqore SONAME package dependency from the installed SDK;
+dh_shlibdeps supplies other shared-library dependencies. The runtime package is
+not Multi-Arch: same because it requires the native Qore interpreter. There
+are no AOT user modules or Qore dependency trailers in this module; ordinary
+dh_strip is appropriate.
+
+Source and binary builds
+------------------------
+
+Use a fresh version for every changed upload. This snapshot precedes the 1.2.0
+release. From a clean committed checkout:
+
+    version=1.2.0~git20260928.1
+    mkdir -p ../sqlite3-package-work
+    git archive --format=tar --prefix="qore-sqlite3-module-$version/" \
+        HEAD -- . ':!debian' | xz > \
+        "../sqlite3-package-work/qore-sqlite3-module_$version.orig.tar.xz"
+    tar -xf "../sqlite3-package-work/qore-sqlite3-module_$version.orig.tar.xz" \
+        -C ../sqlite3-package-work
+    cp -a debian "../sqlite3-package-work/qore-sqlite3-module-$version/"
+    cd "../sqlite3-package-work/qore-sqlite3-module-$version"
+    dpkg-buildpackage -S -us -uc
+
+Extract the .dsc with dpkg-source -x into a clean directory. With dependencies
+preinstalled, build as an unprivileged user with networking disabled:
+
+    dpkg-buildpackage -b -us -uc
+
+Architecture-only builds (-B) do not need Doxygen; architecture-independent
+builds (-A) produce documentation. Both DEB_BUILD_OPTIONS=nodoc and
+DEB_BUILD_PROFILES=nodoc suppress documentation; the profile also omits the doc
+package. Do not use nocheck for qualification.
+
+Qualification and publication
+-----------------------------
+
+The upstream suite runs against the newly built driver using a disposable
+database file, including transactions, binary/NULL/large-integer values, regex
+functions and sandbox checks. The PNG fixture is included with example tests.
+Installed autopkgtests repeat the suite away from the build tree and compile
+a fresh Qore program that loads sqlite3 and performs a database round trip.
+This DBI-only module does not generate qpp metadata; compiler integration uses
+the Datasource API provided by Qore. No optional Qore module is needed.
+
+Check source/binary Lintian, detached debug symbols and hardening, installation
+without libqore-dev, documentation/debug coinstallation, dpkg -V, purge/reinstall,
+and reproducibility from two distinct build directories. Retain the exact source
+commit, source/package hashes, dependency versions and logs. Publishing to the
+testing PPA is separate from approval for a final general release.

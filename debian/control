@@ -1,0 +1,38 @@
+Source: qore-sqlite3-module
+Section: interpreters
+Priority: optional
+Maintainer: David Nichols <david@qore.org>
+Build-Depends: debhelper-compat (= 13),
+               cmake (>= 3.5),
+               libqore-dev (>= 3.0.0~),
+               qore (>= 3.0.0~),
+               pkgconf,
+               libsqlite3-dev
+Build-Depends-Indep: doxygen <!nodoc>
+Standards-Version: 4.7.4
+Rules-Requires-Root: no
+Homepage: https://qore.org
+Vcs-Git: https://github.com/qoretechnologies/module-sqlite3.git
+Vcs-Browser: https://github.com/qoretechnologies/module-sqlite3
+
+Package: qore-sqlite3-module
+Architecture: any
+Depends: ${qore:Depends},
+         ${shlibs:Depends},
+         ${misc:Depends}
+Suggests: qore-sqlite3-module-doc
+Description: SQLite3 database driver for Qore
+ This module connects Qore's DBI API to SQLite databases, including prepared
+ statements, transactions, binary data and in-memory databases. It uses the
+ system SQLite library and does not need a separate database server.
+
+Package: qore-sqlite3-module-doc
+Section: doc
+Architecture: all
+Multi-Arch: foreign
+Build-Profiles: <!nodoc>
+Depends: ${misc:Depends}
+Suggests: qore-sqlite3-module
+Description: documentation and examples for Qore's SQLite3 driver
+ This package contains the HTML API reference and example tests for Qore's
+ SQLite3 database driver.

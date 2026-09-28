@@ -1,0 +1,22 @@
+#!/bin/sh
+# Copyright (C) 2026 David Nichols
+# SPDX-License-Identifier: MIT
+set -eu
+unset QORE_MODULE_DIR QORE_MODULE_DIR_ONLY QORE_INCLUDE_DIR LD_LIBRARY_PATH LD_PRELOAD
+cd "$AUTOPKGTEST_TMP"
+cat > sqlite3-smoke.q <<'EOF'
+%modern
+%requires sqlite3
+int sub main() {
+    Datasource db("sqlite3", "", "", ":memory:");
+    on_exit db.close();
+    db.exec("create table smoke (id integer, value text)");
+    db.exec("insert into smoke values (%v, %v)", 42, "sqlite3-aot-ok");
+    db.commit();
+    hash<auto> row = db.selectRow("select id, value from smoke");
+    return row.id == 42 && row.value == "sqlite3-aot-ok" ? 0 : 1;
+}
+exit(main());
+EOF
+/usr/bin/qcc -o sqlite3-smoke sqlite3-smoke.q
+./sqlite3-smoke
