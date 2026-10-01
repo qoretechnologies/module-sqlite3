@@ -1,140 +1,84 @@
-%define module_api %(qore --module-api 2>/dev/null)
-%define module_dir %{_libdir}/qore-modules
-
-%if 0%{?sles_version}
-
-%define dist .sles%{?sles_version}
-
+# Copyright (C) 2026 Qore Technologies, s.r.o.
+# SPDX-License-Identifier: MIT
+# Use the pinned source epoch for RPM headers and installed file timestamps.
+%global source_date_epoch_from_changelog 1
+%global use_source_date_epoch_as_buildtime 1
+%if v"%{rpmversion}" >= v"4.20"
+%global build_mtime_policy clamp_to_source_date_epoch
 %else
-%if 0%{?suse_version}
-
-# get *suse release major version
-%define os_maj %(echo %suse_version|rev|cut -b3-|rev)
-# get *suse release minor version without trailing zeros
-%define os_min %(echo %suse_version|rev|cut -b-2|rev|sed s/0*$//)
-
-%if %suse_version > 1010
-%define dist .opensuse%{os_maj}_%{os_min}
-%else
-%define dist .suse%{os_maj}_%{os_min}
+%global clamp_mtime_to_source_date_epoch 1
 %endif
-
-%endif
-%endif
-
-# see if we can determine the distribution type
-%if 0%{!?dist:1}
-%define rh_dist %(if [ -f /etc/redhat-release ];then cat /etc/redhat-release|sed "s/[^0-9.]*//"|cut -f1 -d.;fi)
-%if 0%{?rh_dist}
-%define dist .rhel%{rh_dist}
-%else
-%define dist .unknown
-%endif
-%endif
-
-# see if we can determine the distribution type
-%if 0%{!?dist:1}
-%define rh_dist %(if [ -f /etc/redhat-release ];then cat /etc/redhat-release|sed "s/[^0-9.]*//"|cut -f1 -d.;fi)
-%if 0%{?rh_dist}
-%define dist .rhel%{rh_dist}
-%else
-%define dist .unknown
-%endif
-%endif
-
-Summary: SQLite3 DBI module for Qore
+%bcond_without tests
+%bcond_without docs
 Name: qore-sqlite3-module
 Version: 1.2.0
-Release: 1%{dist}
-License: LGPL
-Group: Development/Languages
-URL: http://www.qore.org
-Source: http://prdownloads.sourceforge.net/qore/%{name}-%{version}.tar.bz2
-#Source0: %{name}-%{version}.tar.gz
-BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
-Requires: /usr/bin/env
-Requires: qore-module-api-%{module_api}
+Release: 2%{?dist}
+Summary: SQLite database driver for Qore
+License: MIT
+URL: https://github.com/qoretechnologies/module-sqlite3
+Source0: %{name}-%{version}.tar.xz
+BuildRequires: cmake >= 3.5
+BuildRequires: make
+BuildRequires: pkgconfig(sqlite3)
 BuildRequires: gcc-c++
-%if 0%{?el7}
-BuildRequires:  devtoolset-7-gcc-c++
-%endif
-BuildRequires: qore-devel
-BuildRequires: qore
-BuildRequires: openssl-devel
-# Sqlite RPM package name are different in distros
-%if 0%{?suse_version}
-Requires: sqlite3
-BuildRequires: sqlite3-devel
-%else
-Requires: sqlite > 3.0
-BuildRequires: sqlite-devel > 3.0
+BuildRequires: qore-devel >= 3.0.0~
+BuildRequires: qore-rpm-macros >= 3.0.0~
+%if %{with docs}
+BuildRequires: doxygen
+BuildRequires: /usr/bin/hardlink
 %endif
 
 %description
-Sqlite3 DBI driver module for the Qore Programming Language.
+Native Qore database driver for SQLite, including transactions, prepared
+statements and binary data.
 
-
-%if 0%{?suse_version}
-%debug_package
+%if %{with docs}
+%package doc
+Summary: SQLite module reference documentation
+BuildArch: noarch
+%description doc
+API reference and examples for Qore's SQLite 3 module.
 %endif
 
 %prep
-%setup -q
-
+%autosetup
 %build
-%if 0%{?el7}
-# enable devtoolset7
-. /opt/rh/devtoolset-7/enable
-unset PATH
+%{?set_build_flags}
+. %{_rpmconfigdir}/qore/module-env.sh
+qore_set_source_prefix_maps "%{qore_debug_source_dir}"
+cmake -S . -B build -G 'Unix Makefiles' \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE=-DNDEBUG \
+  -DCMAKE_INSTALL_PREFIX=%{_prefix} -DCMAKE_INSTALL_LIBDIR=%{_lib} \
+  -DCMAKE_SKIP_RPATH=ON -DCMAKE_IGNORE_PREFIX_PATH=/usr/local \
+  -DQore_DIR=%{_libdir}/cmake/Qore -DQORE_EXECUTABLE=/usr/bin/qore \
+  -DQORE_QPP_EXECUTABLE=/usr/bin/qpp \
+  -DCMAKE_DISABLE_FIND_PACKAGE_Doxygen=%{!?with_docs:ON}%{?with_docs:OFF}
+cmake --build build -- %{?_smp_mflags}
+%if %{with docs}
+cmake --build build --target docs -- %{?_smp_mflags}
 %endif
-export CXXFLAGS="%{?optflags}"
-cmake -DCMAKE_INSTALL_PREFIX=%{_prefix} -DCMAKE_BUILD_TYPE=RELWITHDEBINFO -DCMAKE_SKIP_RPATH=1 -DCMAKE_SKIP_INSTALL_RPATH=1 -DCMAKE_SKIP_BUILD_RPATH=1 -DCMAKE_PREFIX_PATH=${_prefix}/lib64/cmake/Qore .
-make %{?_smp_mflags}
-make docs
-
 %install
-make DESTDIR=%{buildroot} install %{?_smp_mflags}
-
-%clean
-rm -rf $RPM_BUILD_ROOT
-
+DESTDIR=%{buildroot} cmake --install build
+chmod 755 %{buildroot}%{_libdir}/qore-modules/sqlite3-api-*.qmod
+%if %{with docs}
+install -d %{buildroot}%{_docdir}/%{name}-doc
+cp -a build/docs/sqlite3/html %{buildroot}%{_docdir}/%{name}-doc/
+hardlink -t -O %{buildroot}%{_docdir}/%{name}-doc
+%endif
+%check
+%if %{with tests}
+. %{_rpmconfigdir}/qore/module-env.sh
+/usr/bin/qore -b --enable-debug -l "$PWD/build/sqlite3-api-$(/usr/bin/qore --latest-module-api).qmod" test/basic.qtest -v --db "$PWD/build/test.sqlite"
+%endif
 %files
-%defattr(-,root,root,-)
-%{module_dir}
-%doc COPYING COPYING.MIT README AUTHORS
-
-%package doc
-Summary: SQLite3 DBI module for Qore
-Group: Development/Languages
-
-%description doc
-SQLite3 module for the Qore Programming Language.
-
-This RPM provides API documentation, test and example programs
-
+%license COPYING.MIT
+%doc README
+%{_libdir}/qore-modules/sqlite3-api-*.qmod
+%if %{with docs}
 %files doc
-%defattr(-,root,root,-)
-%doc docs/sqlite3/html test/basic.qtest test/sqlite3test-threading.q test/blob.png
-
+%license COPYING.MIT
+%doc %{_docdir}/%{name}-doc/
+%endif
 %changelog
-* Thu Jan 2 2026 David Nichols <david.nichols@qoretechnologies.com>
-- updated to version 1.2.0
-- fixed BLOB binding memory safety issue (use SQLITE_TRANSIENT)
-- fixed integer truncation (use sqlite3_column_int64)
-- fixed quote handling in SQL parser
-- added proper error checking for sqlite3_step()
-- added DBI_CAP_HAS_STATEMENT capability
-- added GitLab CI with k8s runner
-- improved documentation
-
-* Mon May 2 2022 David Nichols <david.nichols@qoretechnologies.com>
-- updated to version 1.1.0
-
-* Tue Jul 13 2021 David Nichols <david.nichols@qoretechnologies.com>
-- updated to version 1.0.2
-
-* Fri Apr 16 2010 Petr Vanek <petr.vanek@qoretechnologies.com>
-- updated to version 1.0.1
-
-* Fri Jun 5 2009 Petr Vanek <petr.vanek@qoretechnologies.com>
-- initial spec file for separate sqlite3 release
+* Thu Oct 01 2026 David Nichols <david@qore.org> - 1.2.0-2
+- Use the packaged SDK, generated ABI requirements and offline module tests.
