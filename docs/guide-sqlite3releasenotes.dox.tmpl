@@ -1,0 +1,38 @@
+/* Copyright (C) 2026 Qore Technologies, s.r.o. */
+
+/** @page sqlite3releasenotesguide Release Notes
+
+    @tableofcontents
+
+    - added pre-execution \c SQLStatement::describe() support using declared SQLite column types and affinity;
+      result aliases are preserved exactly, expressions without declared types are reported as unknown, and
+      nullability is conservatively reported because SQLite does not expose it through statement metadata
+    - fixed prepared-statement \c bind() calls to replace values captured by \c prepare(), so
+      \c prepare(sql) followed by \c bind(values) no longer binds NULL placeholders
+
+    @section sqlite_1_2_0 sqlite3 Driver Version 1.2.0
+    - added support for interruptible I/O for graceful termination of sandboxed programs; interrupt
+      checks are performed before database open, statement preparation, and periodically during fetch
+      operations
+      (<a href="https://github.com/qoretechnologies/qore/issues/5116">issue 5116</a>)
+    - fixed BLOB binding memory safety issue: now uses \c SQLITE_TRANSIENT to ensure SQLite makes a copy
+      of binary data, preventing potential use-after-free bugs
+    - fixed integer truncation: now uses \c sqlite3_column_int64() instead of \c sqlite3_column_int()
+      to properly handle 64-bit integers
+    - fixed SQL parser quote handling: bind placeholders inside quoted strings are now correctly ignored
+    - added proper error checking for \c sqlite3_step() return values: now distinguishes between
+      \c SQLITE_DONE (success) and error conditions like \c SQLITE_BUSY or \c SQLITE_ERROR
+    - added \c DBI_CAP_HAS_STATEMENT capability to properly advertise prepared statement support
+    - added GitLab CI configuration with k8s runner support
+    - improved documentation with bind placeholder reference and exception documentation
+    - added \c SQLStatement::fetchColumnar() support when built against %Qore with columnar DBI APIs
+    - optimized columnar DBI results to return dense buffers for homogeneous integer and
+      floating-point result columns
+
+    @section sqlite_1_1_0 sqlite3 Driver Version 1.1.0
+    - added support for the SQL statement API
+    - added support for character encoding handling
+
+    @section sqlite_1_0 sqlite3 Driver Version 1.0
+    - initial release of the driver
+*/

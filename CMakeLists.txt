@@ -50,6 +50,7 @@ set(module_name "sqlite3")
 
 set(QORE_DOX_TMPL_SRC
   docs/mainpage.dox.tmpl
+    docs/guide-sqlite3releasenotes.dox.tmpl
 )
 
 add_library(${module_name} MODULE ${CPP_SRC})
