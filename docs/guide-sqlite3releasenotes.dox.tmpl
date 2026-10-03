@@ -4,13 +4,14 @@
 
     @tableofcontents
 
+    @section sqlite_1_2_0 sqlite3 Driver Version 1.2.0
+
     - added pre-execution \c SQLStatement::describe() support using declared SQLite column types and affinity;
       result aliases are preserved exactly, expressions without declared types are reported as unknown, and
       nullability is conservatively reported because SQLite does not expose it through statement metadata
     - fixed prepared-statement \c bind() calls to replace values captured by \c prepare(), so
       \c prepare(sql) followed by \c bind(values) no longer binds NULL placeholders
 
-    @section sqlite_1_2_0 sqlite3 Driver Version 1.2.0
     - added support for interruptible I/O for graceful termination of sandboxed programs; interrupt
       checks are performed before database open, statement preparation, and periodically during fetch
       operations
@@ -34,5 +35,5 @@
     - added support for character encoding handling
 
     @section sqlite_1_0 sqlite3 Driver Version 1.0
-    - initial release of the driver
+    - initial release
 */
