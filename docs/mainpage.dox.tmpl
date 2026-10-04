@@ -125,6 +125,12 @@ ColumnarResult columns = stmt.fetchColumnar();
     |\c SQLITE3-BIND-PLACEHOLDERS-ERROR|Raised when bindPlaceholders() is called (not supported)
     |\c SQLITE3-STATEMENT-BIND-ERROR|Raised when binding values to a prepared statement fails
 
+    Exceptions raised from an SQLite engine error (\c SQLITE3-SELECT-ROWS, \c SQLITE3-EXEC,
+    \c SQLITE3-EXECRAW and \c SQLITE3-STATEMENT-EXEC-ERROR) carry the engine's result codes in the exception
+    argument: \c code is the primary result code and \c extended_code the extended one (for example
+    \c 1555 \c SQLITE_CONSTRAINT_PRIMARYKEY or \c 2067 \c SQLITE_CONSTRAINT_UNIQUE), so a caller can
+    recognize a constraint violation without matching the message.
+
     @subsection sqlite3_thread_safety Thread Safety
 
     The sqlite3 driver is thread-safe. However, when using a single \c Datasource object from multiple threads,

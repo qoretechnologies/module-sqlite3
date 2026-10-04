@@ -6,6 +6,9 @@
 
     @section sqlite_1_2_0 sqlite3 Driver Version 1.2.0
 
+    - SQLite engine errors now carry the engine's primary and extended result codes in the exception argument
+      (\c code and \c extended_code), so a duplicate key or other constraint violation can be recognized
+      without matching the message text
     - added pre-execution \c SQLStatement::describe() support using declared SQLite column types and affinity;
       result aliases are preserved exactly, expressions without declared types are reported as unknown, and
       nullability is conservatively reported because SQLite does not expose it through statement metadata

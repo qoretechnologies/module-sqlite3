@@ -459,6 +459,18 @@ QoreValue QoreSqlite3ExecBase::columnValue(sqlite3_stmt * stmt, int index) {
     return new QoreStringNode((const char*)sqlite3_column_text(stmt, index));
 }
 
+//! Raises an SQLite error with its result codes in the exception argument
+/** The description keeps the engine's message; the argument carries \c code (the primary result code) and
+    \c extended_code (the extended result code), so callers can tell a constraint violation from any other
+    error without matching the message text.
+*/
+static void raise_sqlite3_error(ExceptionSink* xsink, const char* err, sqlite3* db) {
+    ReferenceHolder<QoreHashNode> arg(new QoreHashNode(autoTypeInfo), xsink);
+    arg->setKeyValue("code", sqlite3_errcode(db), xsink);
+    arg->setKeyValue("extended_code", sqlite3_extended_errcode(db), xsink);
+    xsink->raiseExceptionArg(err, arg.release(), "sqlite3 error: %s", sqlite3_errmsg(db));
+}
+
 QoreSqlite3Executor::QoreSqlite3Executor(sqlite3* handler, const QoreEncoding* enc, ExceptionSink* xsink)
         : QoreSqlite3ExecBase(enc, new QoreListNode(autoTypeInfo)), m_handler(handler) {
 }
@@ -543,7 +555,7 @@ QoreListNode* QoreSqlite3Executor::select_rows(
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(m_handler, statement.c_str(), -1, &stmt, 0);
     if (rc != SQLITE_OK) {
-        xsink->raiseException("SQLITE3-SELECT-ROWS", "sqlite3 error: %s", sqlite3_errmsg(m_handler));
+        raise_sqlite3_error(xsink, "SQLITE3-SELECT-ROWS", m_handler);
         return nullptr;
     }
     ON_BLOCK_EXIT(sqlite3_finalize, stmt);
@@ -572,7 +584,7 @@ QoreListNode* QoreSqlite3Executor::select_rows(
     }
 
     if (rc != SQLITE_DONE) {
-        xsink->raiseException("SQLITE3-SELECT-ROWS", "sqlite3 error: %s", sqlite3_errmsg(m_handler));
+        raise_sqlite3_error(xsink, "SQLITE3-SELECT-ROWS", m_handler);
         return nullptr;
     }
 
@@ -607,7 +619,7 @@ QoreHashNode* QoreSqlite3Executor::select_internal(
     sqlite3_stmt* stmt;
     int rc = sqlite3_prepare_v2(m_handler, statement.c_str(), -1, &stmt, 0);
     if (rc != SQLITE_OK) {
-        xsink->raiseException(calltype, "sqlite3 error: %s", sqlite3_errmsg(m_handler));
+        raise_sqlite3_error(xsink, calltype, m_handler);
         return nullptr;
     }
     ON_BLOCK_EXIT(sqlite3_finalize, stmt);
@@ -640,7 +652,7 @@ QoreHashNode* QoreSqlite3Executor::select_internal(
     }
 
     if (rc != SQLITE_DONE) {
-        xsink->raiseException(calltype, "sqlite3 error: %s", sqlite3_errmsg(m_handler));
+        raise_sqlite3_error(xsink, calltype, m_handler);
         return nullptr;
     }
 
@@ -740,8 +752,7 @@ int QoreSqlite3PreparedStatement::exec(ExceptionSink* xsink) {
             rc = sqlite3_step(stmt);
         } while (rc == SQLITE_ROW);
         if (rc != SQLITE_DONE) {
-            xsink->raiseException("SQLITE3-STATEMENT-EXEC-ERROR", "sqlite3 error: %s",
-                sqlite3_errmsg(conn->handler()));
+            raise_sqlite3_error(xsink, "SQLITE3-STATEMENT-EXEC-ERROR", conn->handler());
             return -1;
         }
         return 0;

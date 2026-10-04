@@ -35,8 +35,40 @@ class Sqlite3BasicTest inherits QUnit::Test {
         addTestCase("LargeIntegerTests", \largeIntegerTests());
         addTestCase("RegexFunctionTests", \regexFunctionTests());
         addTestCase("SandboxFilesystemTest", \sandboxFilesystemTest());
+        addTestCase("ErrorCodeTests", \errorCodeTests());
 
         set_return_value(main());
+    }
+
+    private hash<ExceptionInfo> catchError(code c) {
+        try {
+            c();
+        } catch (hash<ExceptionInfo> ex) {
+            return ex;
+        }
+        throw "TEST-ERROR", "the statement did not fail";
+    }
+
+    errorCodeTests() {
+        execIgnore("drop table err_codes");
+        ds.exec("create table err_codes (id integer primary key, name text unique)");
+        on_exit execIgnore("drop table err_codes");
+        ds.exec("insert into err_codes values (1, 'a')");
+
+        # SQLITE_CONSTRAINT (19) / SQLITE_CONSTRAINT_PRIMARYKEY (1555)
+        hash<ExceptionInfo> ex = catchError(sub () { ds.exec("insert into err_codes values (1, 'b')"); });
+        assertEq("SQLITE3-EXEC", ex.err);
+        assertEq(19, ex.arg.code);
+        assertEq(1555, ex.arg.extended_code);
+
+        # SQLITE_CONSTRAINT_UNIQUE (2067)
+        ex = catchError(sub () { ds.exec("insert into err_codes values (2, 'a')"); });
+        assertEq(2067, ex.arg.extended_code);
+
+        # SQLITE_ERROR (1) for an invalid statement
+        ex = catchError(sub () { ds.select("select * from no_such_table"); });
+        assertEq(1, ex.arg.code);
+        ds.rollback();
     }
 
     private bool isMissingColumnarApi(hash<ExceptionInfo> ex) {
