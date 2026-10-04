@@ -49,6 +49,7 @@ set(CPP_SRC
 set(module_name "sqlite3")
 
 set(QORE_DOX_TMPL_SRC
+    docs/guide-sqlite3capabilities.dox.tmpl
   docs/mainpage.dox.tmpl
     docs/guide-sqlite3releasenotes.dox.tmpl
 )

@@ -28,14 +28,8 @@ Datasource ds("sqlite3:@/tmp/my-file.sqlite(utf8)");
     database. Please refer to the SQLite3 documentation for more information on how the SQLite library opens
     databases.
 
-    This driver supports the following DBI capabilities:
-    - \c DBI_CAP_TRANSACTION_MANAGEMENT
-    - \c DBI_CAP_CHARSET_SUPPORT
-    - \c DBI_CAP_LOB_SUPPORT
-    - \c DBI_CAP_BIND_BY_VALUE
-    - \c DBI_CAP_HAS_EXECRAW
-    - \c DBI_CAP_HAS_STATEMENT
-    - \c DBI_CAP_HAS_NUMBER_SUPPORT
+    The driver supports transactions, bound parameters, and prepared statements.
+    See @ref sqlite3capabilitiesguide for supported features and their requirements.
 
     The driver employs efficient binary bindings for all supported data types when selecting and binding by value.
 
@@ -176,6 +170,7 @@ background sub() {
 
     @par Documentation
 
+    - @subpage sqlite3capabilitiesguide
     - @anchor sqlite3releasenotes @subpage sqlite3releasenotesguide
 
 */
