@@ -113,7 +113,8 @@ ColumnarResult columns = stmt.fetchColumnar();
     |\c SQLITE3-ROLLBACK-ERROR|Raised when rolling back a transaction fails
     |\c SQLITE3-PARSE-EXCEPTION|Raised when parsing bind placeholders fails (invalid format)
     |\c SQLITE3-BIND-EXCEPTION|Raised when binding a parameter fails (unsupported type, etc.)
-    |\c SQLITE3-SELECT-ROWS|Raised when executing a select query fails
+    |\c SQLITE3-SELECT|Raised when executing a select query fails
+    |\c SQLITE3-SELECT-ROWS|Raised when executing a row-wise select query fails
     |\c SQLITE3-EXEC|Raised when executing a statement fails
     |\c SQLITE3-EXECRAW|Raised when executing a raw statement fails
     |\c SQLITE3-PREPARE-ERROR|Raised when preparing a statement fails
@@ -125,7 +126,7 @@ ColumnarResult columns = stmt.fetchColumnar();
     |\c SQLITE3-BIND-PLACEHOLDERS-ERROR|Raised when bindPlaceholders() is called (not supported)
     |\c SQLITE3-STATEMENT-BIND-ERROR|Raised when binding values to a prepared statement fails
 
-    Exceptions raised from an SQLite engine error (\c SQLITE3-SELECT-ROWS, \c SQLITE3-EXEC,
+    Exceptions raised from an SQLite engine error (\c SQLITE3-SELECT, \c SQLITE3-SELECT-ROWS, \c SQLITE3-EXEC,
     \c SQLITE3-EXECRAW and \c SQLITE3-STATEMENT-EXEC-ERROR) carry the engine's result codes in the exception
     argument: \c code is the primary result code and \c extended_code the extended one (for example
     \c 1555 \c SQLITE_CONSTRAINT_PRIMARYKEY or \c 2067 \c SQLITE_CONSTRAINT_UNIQUE), so a caller can
