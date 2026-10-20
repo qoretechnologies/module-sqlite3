@@ -101,6 +101,15 @@ ColumnarResult columns = stmt.fetchColumnar();
     mixed-type, text, blob, and all-null columns use the standard list-backed
     columnar representation.
 
+    @subsection sqlite3_one_statement One Statement at a Time
+
+    The driver runs one SQL statement per call, as SQLite compiles one statement at a time: the SQL given to
+    \c Datasource::exec(), \c Datasource::execRaw(), \c Datasource::select(), \c Datasource::selectRows(),
+    \c Datasource::selectRow() or \c SQLStatement::prepare() must be one statement.  SQL with another statement after
+    the first raises the exception of the call (for example \c SQLITE3-EXEC, or \c SQLITE3-PREPARE-ERROR for an
+    \c SQLStatement), and nothing is run.  Whitespace, comments and empty statements (\c ;) after the statement are
+    allowed.  To run several statements, run each one in its own call.
+
     @subsection sqlite3_exceptions Exceptions
 
     The sqlite3 driver can throw the following exceptions:
@@ -125,6 +134,10 @@ ColumnarResult columns = stmt.fetchColumnar();
     |\c SQLITE3-GET-OUTPUT-ROWS-ERROR|Raised when getOutputRows() is called (stored procedures not supported)
     |\c SQLITE3-BIND-PLACEHOLDERS-ERROR|Raised when bindPlaceholders() is called (not supported)
     |\c SQLITE3-STATEMENT-BIND-ERROR|Raised when binding values to a prepared statement fails
+
+    SQL with more than one statement raises the exception of the call that it is given to (\c SQLITE3-EXEC,
+    \c SQLITE3-EXECRAW, \c SQLITE3-SELECT, \c SQLITE3-SELECT-ROWS or \c SQLITE3-PREPARE-ERROR); see
+    @ref sqlite3_one_statement.
 
     Exceptions raised from an SQLite engine error (\c SQLITE3-SELECT, \c SQLITE3-SELECT-ROWS, \c SQLITE3-EXEC,
     \c SQLITE3-EXECRAW and \c SQLITE3-STATEMENT-EXEC-ERROR) carry the engine's result codes in the exception

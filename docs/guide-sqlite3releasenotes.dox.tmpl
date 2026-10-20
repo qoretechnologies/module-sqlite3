@@ -6,6 +6,9 @@
 
     @section sqlite_1_2_0 sqlite3 Driver Version 1.2.0
 
+    - SQL with more than one statement now raises an exception before anything is run; the driver runs one
+      statement at a time, and ran only the first statement of such SQL, ignoring the others without an error;
+      whitespace, comments and empty statements after the statement are allowed (see @ref sqlite3_one_statement)
     - SQLite engine errors now carry the engine's primary and extended result codes in the exception argument
       (\c code and \c extended_code), so a duplicate key or other constraint violation can be recognized
       without matching the message text
