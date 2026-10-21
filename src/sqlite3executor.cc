@@ -471,6 +471,47 @@ static void raise_sqlite3_error(ExceptionSink* xsink, const char* err, sqlite3* 
     xsink->raiseExceptionArg(err, arg.release(), "sqlite3 error: %s", sqlite3_errmsg(db));
 }
 
+//! Raises an exception if a statement follows the first statement of the SQL
+/** sqlite3_prepare_v2() compiles only the first statement of its SQL and returns the rest in its tail; the driver
+    runs that one statement, so a statement in the tail would never run.  The tail is compiled statement by statement
+    here, without running anything: whitespace, comments and empty statements (\c ;) compile to no statement, and
+    anything else, including SQL that fails to compile, is an error.
+
+    @param db the database handle
+    @param tail the tail that sqlite3_prepare_v2() returned for the first statement
+    @param err the exception code to raise
+    @param xsink if an error occurs, the Qore-language exception info is added here
+
+    @return 0 if no statement follows the first one, -1 if an exception was raised
+*/
+static int check_no_trailing_statement(sqlite3* db, const char* tail, const char* err, ExceptionSink* xsink) {
+    while (tail && *tail) {
+        if (qore_check_cancel(xsink)) {
+            return -1;
+        }
+        sqlite3_stmt* next = nullptr;
+        const char* rest = nullptr;
+        int rc = sqlite3_prepare_v2(db, tail, -1, &next, &rest);
+        if (next) {
+            sqlite3_finalize(next);
+        }
+        if (rc != SQLITE_OK || next) {
+            while (isspace(static_cast<unsigned char>(*tail))) {
+                ++tail;
+            }
+            xsink->raiseException(err, "the SQL has more than one statement, but the sqlite3 driver runs only one "
+                "statement at a time; the SQL after the first statement would not be run: %s", tail);
+            return -1;
+        }
+        // whitespace, comments or an empty statement: nothing more to compile, or the rest of the tail
+        if (!rest || rest == tail) {
+            break;
+        }
+        tail = rest;
+    }
+    return 0;
+}
+
 QoreSqlite3Executor::QoreSqlite3Executor(sqlite3* handler, const QoreEncoding* enc, ExceptionSink* xsink)
         : QoreSqlite3ExecBase(enc, new QoreListNode(autoTypeInfo)), m_handler(handler) {
 }
@@ -553,12 +594,16 @@ QoreListNode* QoreSqlite3Executor::select_rows(
     }
 
     sqlite3_stmt *stmt;
-    int rc = sqlite3_prepare_v2(m_handler, statement.c_str(), -1, &stmt, 0);
+    const char* tail = nullptr;
+    int rc = sqlite3_prepare_v2(m_handler, statement.c_str(), -1, &stmt, &tail);
     if (rc != SQLITE_OK) {
         raise_sqlite3_error(xsink, "SQLITE3-SELECT-ROWS", m_handler);
         return nullptr;
     }
     ON_BLOCK_EXIT(sqlite3_finalize, stmt);
+    if (check_no_trailing_statement(m_handler, tail, "SQLITE3-SELECT-ROWS", xsink)) {
+        return nullptr;
+    }
 
     if (bindParameters(stmt, xsink)) {
         xsink->raiseException("SQLITE3-SELECT-ROWS", "failed to bind variables");
@@ -617,12 +662,16 @@ QoreHashNode* QoreSqlite3Executor::select_internal(
     }
 
     sqlite3_stmt* stmt;
-    int rc = sqlite3_prepare_v2(m_handler, statement.c_str(), -1, &stmt, 0);
+    const char* tail = nullptr;
+    int rc = sqlite3_prepare_v2(m_handler, statement.c_str(), -1, &stmt, &tail);
     if (rc != SQLITE_OK) {
         raise_sqlite3_error(xsink, calltype, m_handler);
         return nullptr;
     }
     ON_BLOCK_EXIT(sqlite3_finalize, stmt);
+    if (check_no_trailing_statement(m_handler, tail, calltype, xsink)) {
+        return nullptr;
+    }
 
     if (binding && bindParameters(stmt, xsink)) {
         xsink->raiseException(calltype, "failed to bind variables");
@@ -684,9 +733,13 @@ int QoreSqlite3PreparedStatement::prepare(const QoreString& sql, const QoreListN
     }
 
     assert(!stmt);
-    int rc = sqlite3_prepare_v2(conn->handler(), this->sql->c_str(), -1, &stmt, 0);
+    const char* tail = nullptr;
+    int rc = sqlite3_prepare_v2(conn->handler(), this->sql->c_str(), -1, &stmt, &tail);
     if (rc != SQLITE_OK) {
         xsink->raiseException("SQLITE3-PREPARE-ERROR", "%s", sqlite3_errmsg(conn->handler()));
+        return -1;
+    }
+    if (check_no_trailing_statement(conn->handler(), tail, "SQLITE3-PREPARE-ERROR", xsink)) {
         return -1;
     }
 

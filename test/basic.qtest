@@ -36,6 +36,7 @@ class Sqlite3BasicTest inherits QUnit::Test {
         addTestCase("RegexFunctionTests", \regexFunctionTests());
         addTestCase("SandboxFilesystemTest", \sandboxFilesystemTest());
         addTestCase("ErrorCodeTests", \errorCodeTests());
+        addTestCase("TrailingStatementTests", \trailingStatementTests());
 
         set_return_value(main());
     }
@@ -55,6 +56,56 @@ class Sqlite3BasicTest inherits QUnit::Test {
         # SQLITE_ERROR (1) for an invalid statement
         assertThrows("SQLITE3-SELECT", NOTHING, {"code": 1}, \ds.select(), "select * from no_such_table");
         ds.rollback();
+    }
+
+    #! The driver runs one statement at a time: SQL with a statement after the first is refused, and nothing is run
+    trailingStatementTests() {
+        execIgnore("drop table trailing");
+        ds.exec("create table trailing (id integer)");
+        ds.commit();
+        on_exit execIgnore("drop table trailing");
+        on_exit ds.rollback();
+
+        string err = "the SQL has more than one statement, but the sqlite3 driver runs only one statement at a time";
+        assertThrows("SQLITE3-EXEC", err + "; the SQL after the first statement would not be run: insert into "
+            "trailing values \\(2\\)$", \ds.exec(), "insert into trailing values (1); insert into trailing values (2)");
+        assertThrows("SQLITE3-EXEC", err, \ds.exec(), ("insert into trailing values (%v); delete from trailing", 1));
+        assertThrows("SQLITE3-EXECRAW", err, \ds.execRaw(), "insert into trailing values (1); drop table trailing");
+        # a trailing statement that does not compile is not run either
+        assertThrows("SQLITE3-EXEC", err, \ds.exec(), "insert into trailing values (1); insert into no_such_table "
+            "values (1)");
+        assertThrows("SQLITE3-SELECT", err, \ds.select(), "select * from trailing; delete from trailing");
+        assertThrows("SQLITE3-SELECT-ROWS", err, \ds.selectRows(), "select * from trailing; select 1");
+        assertThrows("SQLITE3-SELECT-ROWS", err, \ds.selectRow(), "select * from trailing; select 1");
+        SQLStatement stmt(ds);
+        stmt.prepare("insert into trailing values (%v); insert into trailing values (2)");
+        assertThrows("SQLITE3-PREPARE-ERROR", err, \stmt.exec(), (1,));
+        stmt.close();
+        SQLStatement raw_stmt(ds);
+        raw_stmt.prepareRaw("insert into trailing values (1); insert into trailing values (2)");
+        assertThrows("SQLITE3-PREPARE-ERROR", err, \raw_stmt.exec());
+        raw_stmt.close();
+        assertEq(0, ds.selectRow("select count(*) as n from trailing").n, "no statement was run");
+
+        # whitespace, comments and empty statements after the statement are no statement
+        list<string> no_statement = (
+            "insert into trailing values (1);",
+            "insert into trailing values (1)  \n\t ",
+            "insert into trailing values (1); -- a comment",
+            "insert into trailing values (1) /* a comment */; /* another */ -- and a line comment\n",
+            "insert into trailing values (1);;  ;",
+        );
+        foreach string sql in (no_statement) {
+            int before = ds.selectRow("select count(*) as n from trailing").n;
+            ds.exec(sql);
+            assertEq(before + 1, ds.selectRow("select count(*) as n from trailing").n, sql);
+        }
+        SQLStatement ok_stmt(ds);
+        ok_stmt.prepare("insert into trailing values (%v); -- a comment");
+        ok_stmt.exec(2);
+        ok_stmt.close();
+        assertEq(no_statement.size() + 1, ds.selectRow("select count(*) as n from trailing").n);
+        assertEq(({"id": 2},), ds.selectRows("select id from trailing where id = 2; /* one statement */"));
     }
 
     private bool isMissingColumnarApi(hash<ExceptionInfo> ex) {

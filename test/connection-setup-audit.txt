@@ -70,15 +70,27 @@ native connection setup. SQLite API contract: https://www.sqlite.org/c3ref/open.
 | **Documentation**: Doxygen `@param`, `@return`, `@throw` on all public methods; `@par Example` with realistic business scenarios; `@note` for important caveats | Pass | README has executable build/test examples and native filesystem cancellation limitation; release notes updated. No new public Qore method. |
 | **QPP flags**: `[flags=CONSTANT]` on methods that never throw; `[flags=RET_VALUE_ONLY]` on methods that throw but have no side effects | N/A | No QPP method changes. |
 | **Security**: No user-controlled format strings; no buffer overflows; bounds checking on array indices; no credentials in code | Pass | No credentials, user-controlled format strings or unchecked buffers; filesystem sandbox behavior passes existing tests. |
-| **Correctness**: Algorithms verified against reference implementations; edge cases tested (empty data, single sample, all-zero features) | Pass | Debug build; 4 connection cases/44 assertions and existing 8 cases/1438 assertions pass. Native interruption test fails before fix and passes after. Valgrind verification recorded below. |
+| **Correctness**: Algorithms verified against reference implementations; edge cases tested (empty data, single sample, all-zero features) | Pass | Debug build; 4 connection cases/44 assertions and existing 9 cases/1455 assertions pass. Native interruption test fails before fix and passes after. Valgrind verification recorded below. |
 
 Verification:
 - Debug build with /usr prefix, matching the installed qore; no compiler warnings.
 - New suite: 4 cases / 44 assertions, including deterministic native-open interruption;
-  existing basic suite: 8 cases / 1438 assertions, including filesystem sandbox checks.
+  existing basic suite after integration: 9 cases / 1455 assertions, including filesystem sandbox checks.
 - Valgrind with qore -b --enable-debug and qore.supp: zero definitely/indirectly/
   possibly lost bytes and zero unsuppressed errors on the native-interruption suite.
   Valgrind reports a debug-info parsing diagnostic (missing DW_AT_abstract_origin)
   for the installed libqore, independently of SQLite source changes.
 - Documentation target, shell syntax checks and git diff --check pass.
 - Raw logs: /tmp/db-connect-audit-x6bnghwe/sqlite-*.
+
+Integration audit: origin/develop c2e394f was merged before publication. Its
+single-statement validation implementation and tests are preserved unchanged;
+the release-note conflict was resolved by retaining both sets of entries.
+All 62 checklist rows were re-evaluated for our delta relative to c2e394f;
+no further source changes were required. The merged Debug build, all 13 cases
+(1499 assertions), documentation and whitespace/shell checks pass.
+A separate unmodified c50da35 checkout reproduced the failed-open leak under
+Valgrind: 34,560 bytes directly and 24,000 bytes indirectly lost across 40
+failed opens. The fixed suite has zero lost bytes.
+Merged connection suite also passes Valgrind with --read-inline-info=no,
+zero lost bytes and zero unsuppressed errors, without debug-info diagnostics.
