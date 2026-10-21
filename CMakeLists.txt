@@ -5,14 +5,9 @@ project(qore-sqlite3-module VERSION 1.2.0)
 
 option(INSTALL_DOCS "Install documentation" OFF)
 
-# Check for C++11.
 include(CheckCXXCompilerFlag)
-CHECK_CXX_COMPILER_FLAG("-std=c++11" COMPILER_SUPPORTS_CXX11)
-if(COMPILER_SUPPORTS_CXX11)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
-else()
-    message(FATAL_ERROR "The compiler ${CMAKE_CXX_COMPILER} has no C++11 support. Please use a different C++ compiler.")
-endif()
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Qore 1.0 REQUIRED)
 
@@ -61,6 +56,13 @@ if (DEFINED ENV{DOXYGEN_EXECUTABLE})
 endif()
 
 qore_external_binary_module(${module_name} ${PROJECT_VERSION} ${SQLITE3_LDFLAGS} Threads::Threads)
+
+# Preload fixture for deterministic cancellation inside sqlite3_open().
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_library(sqlite3_open_interrupt SHARED test/sqlite3-open-interrupt.cpp)
+    target_link_libraries(sqlite3_open_interrupt PRIVATE "-Wl,--no-as-needed" ${SQLITE3_LDFLAGS}
+        ${QORE_LIBRARY} ${CMAKE_DL_LIBS})
+endif()
 
 qore_dist(${PROJECT_VERSION})
 

@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <strings.h>
+#include <memory>
 
 #include <qore/Qore.h>
 #include <qore/QoreSandboxManager.h>
@@ -59,6 +60,8 @@ extern "C" DLLEXPORT void sqlite3_qore_module_desc(QoreModuleInfo& mod_info) {
 }
 
 DBIDriver* DBID_SQLITE3 = nullptr;
+
+using Sqlite3Handle = std::unique_ptr<sqlite3, decltype(&sqlite3_close)>;
 
 // this is the thread key that will tell us if the current thread has been initialized for sqlite threading
 static pthread_key_t ptk_sqlite3;
@@ -100,8 +103,13 @@ static sqlite3* qore_sqlite3_init(Datasource* ds, ExceptionSink* xsink) {
         }
     }
 
-    sqlite3 *db;
+    sqlite3* db = nullptr;
     int ret = sqlite3_open(ds->getDBName(), &db);
+    // SQLite can return a handle on failure; every returned handle must be closed.
+    Sqlite3Handle holder(db, sqlite3_close);
+    if (qore_check_cancel(xsink, "opening SQLite database")) {
+        return nullptr;
+    }
     if (ret != SQLITE_OK) {
         xsink->raiseException("SQLITE3-CONNECT-ERROR", "cannot open %s", ds->getDBName());
         return nullptr;
@@ -113,11 +121,13 @@ static sqlite3* qore_sqlite3_init(Datasource* ds, ExceptionSink* xsink) {
     }
 
     if (qore_sqlite3_register_functions(db, xsink)) {
-        sqlite3_close(db);
+        return nullptr;
+    }
+    if (qore_check_cancel(xsink, "initializing SQLite database")) {
         return nullptr;
     }
 
-    return db;
+    return holder.release();
 }
 
 static int qore_sqlite3_commit(Datasource* ds, ExceptionSink* xsink) {
@@ -203,13 +213,14 @@ static int qore_sqlite3_open_datasource(Datasource* ds, ExceptionSink* xsink) {
 // 	printf("open datasource\n");
     checkInit();
 
-    sqlite3* db = qore_sqlite3_init(ds, xsink);
+    Sqlite3Handle db(qore_sqlite3_init(ds, xsink), sqlite3_close);
     if (!db) {
         return -1;
     }
 
-    QoreSqlite3Connection* d_sqlite3 = new QoreSqlite3Connection(db, QEM.findCreate(ds->getOSEncoding()));
-    ds->setPrivateData((void*)d_sqlite3);
+    QoreSqlite3Connection* d_sqlite3 = new QoreSqlite3Connection(db.get(), QEM.findCreate(ds->getOSEncoding()));
+    db.release();
+    ds->setPrivateData(d_sqlite3);
 
     return 0;
 }

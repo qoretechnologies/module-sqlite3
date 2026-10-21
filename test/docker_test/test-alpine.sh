@@ -50,5 +50,8 @@ chown -R qore:qore ${MODULE_SRC_DIR}
 # run the tests
 cd ${MODULE_SRC_DIR}
 for test in test/*.qtest; do
-    gosu qore:qore qore $test -vv
+    gosu qore:qore qore -b --enable-debug "$test" -vv
 done
+gosu qore:qore env QORE_TEST_SQLITE_INTERRUPT=1 \
+    LD_PRELOAD="${MODULE_SRC_DIR}/build/libsqlite3_open_interrupt.so" \
+    qore -b --enable-debug test/connection-setup.qtest -vv

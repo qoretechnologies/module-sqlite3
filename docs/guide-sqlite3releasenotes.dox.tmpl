@@ -6,6 +6,10 @@
 
     @section sqlite_1_2_0 sqlite3 Driver Version 1.2.0
 
+    - failed connection attempts now release the SQLite handle returned with an error;
+      cancellation during open or initialization closes the handle and preserves the cancellation exception
+    - raised the build language requirement to C++17, matching the current Qore headers
+
     - SQLite engine errors now carry the engine's primary and extended result codes in the exception argument
       (\c code and \c extended_code), so a duplicate key or other constraint violation can be recognized
       without matching the message text

@@ -1,0 +1,70 @@
+#!/usr/bin/env qore
+# Copyright 2026 Qore Technologies, s.r.o.
+%modern
+%no-child-restrictions
+%prepend-module-path "${SCRIPT_DIR}/../build"
+%requires sqlite3
+%requires QUnit
+%exec-class ConnectionSetupTest
+
+class ConnectionSetupTest inherits QUnit::Test {
+    constructor() : Test("SQLite connection setup", "1.0", \ARGV) {
+        addTestCase("failed open handles are released", \failedOpen());
+        addTestCase("memory database remains usable", \memoryOpen());
+        addTestCase("pending interruption prevents open", \pendingInterrupt());
+        if (ENV.QORE_TEST_SQLITE_INTERRUPT) {
+            addTestCase("interruption during native open", \nativeInterrupt());
+        }
+        set_return_value(main());
+    }
+
+    private openDatabase(string name) {
+        Datasource ds("sqlite3", "", "", name);
+        ds.open();
+        ds.close();
+    }
+
+    failedOpen() {
+        # A directory and a missing child under a regular file both fail even as root.
+        for (int i = 0; i < 20; ++i) {
+            assertThrows("SQLITE3-CONNECT-ERROR", \openDatabase(), get_script_dir());
+            assertThrows("SQLITE3-CONNECT-ERROR", \openDatabase(), get_script_path() + "/missing.sqlite");
+        }
+    }
+
+    memoryOpen() {
+        Datasource ds("sqlite3", "", "", ":memory:");
+        ds.open();
+        assertEq(42, ds.selectRow("select 42 as value").value);
+        ds.close();
+        ds.open();
+        assertEq(7, ds.selectRow("select 7 as value").value);
+        ds.close();
+    }
+
+    private Program worker(SandboxManager sm) {
+        Program p(PO_NO_CHILD_PO_RESTRICTIONS);
+        p.loadModule("sqlite3");
+        p.parse("%modern
+sub run() {
+    Datasource ds(\"sqlite3\", \"\", \"\", \":memory:\");
+    ds.open();
+    ds.close();
+}", "sqlite-connection-worker");
+        p.setSandboxManager(sm);
+        return p;
+    }
+
+    pendingInterrupt() {
+        SandboxManager sm();
+        Program p = worker(sm);
+        sm.requestInterrupt();
+        assertThrows("PROGRAM-INTERRUPTED", \p.callFunction(), "run");
+    }
+
+    nativeInterrupt() {
+        SandboxManager sm();
+        Program p = worker(sm);
+        assertThrows("PROGRAM-INTERRUPTED", \p.callFunction(), "run");
+    }
+}

@@ -18,6 +18,24 @@ The Qore sqlite3 driver uses binary communication with SQLite3 files
 
 test/example scripts are stored in test/ subdirectory
 
+Connection setup releases native handles on failure and preserves cancellation
+received while SQLite opens or initializes a database. SQLite has no network
+login or address list; cancellation is checked after the native filesystem call
+returns.
+
+To test connection cleanup and cancellation without installing the module:
+
+    cmake -S . -B build-debug -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=/usr
+    cmake --build build-debug -j4
+    qore -b --enable-debug -l build-debug/sqlite3-api-2.0.qmod test/connection-setup.qtest
+
+On Linux, the preload fixture also tests interruption inside the native open call:
+
+    QORE_TEST_SQLITE_INTERRUPT=1 LD_PRELOAD="$PWD/build-debug/libsqlite3_open_interrupt.so" \
+        qore -b --enable-debug -l build-debug/sqlite3-api-2.0.qmod test/connection-setup.qtest
+
+Run the connection suite under Valgrind to verify failed-open handle cleanup.
+
 
 BUILD AND INSTALL
 -----------------
