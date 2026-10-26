@@ -15,7 +15,8 @@ extern "C" int sqlite3_open(const char* name, sqlite3** db) {
         return SQLITE_MISUSE;
     }
     int result = open(name, db);
-    QoreSandboxManagerHelper smh;
+    // the governing sandbox, whose interrupt the test requests: not a policy check
+    QoreSandboxManagerHelper smh(QoreSandboxManagerHelper::All);
     if (smh) {
         smh->requestInterrupt();
     }

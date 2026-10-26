@@ -632,6 +632,9 @@ class Sqlite3BasicTest inherits QUnit::Test {
                 Datasource ds('sqlite3', '', '', '%s');
                 ds.open();
             }
+            auto sub through(code c) {
+                return c();
+            }
         ", testDbPath), "sandbox_db_test");
 
         SandboxManager sm();
@@ -647,6 +650,21 @@ class Sqlite3BasicTest inherits QUnit::Test {
             assertEq("FILESYSTEM-ACCESS-DENIED", ex.err, "Database access blocked with correct error");
         }
         assertTrue(caught, "Database access outside sandbox was blocked");
+
+        # a system-policy capability called from the sandbox is subject to the system policy, not the sandbox's
+        code use_db = int sub () {
+            Datasource ds('sqlite3', '', '', testDbPath);
+            ds.open();
+            on_exit ds.close();
+            ds.exec('create table if not exists capability (id integer)');
+            ds.exec('insert into capability values (7)');
+            ds.commit();
+            return ds.selectRow('select count(*) as n from capability').n;
+        };
+        assertThrows("FILESYSTEM-ACCESS-DENIED", \p.callFunction(), ("through", use_db),
+            "the same code called directly from the sandbox is denied");
+        assertEq(1, p.callFunction("through", SandboxManager::createSystemPolicyCall(use_db)),
+            "a database file is opened in a system-policy capability");
 
         # Test that :memory: database works even with filesystem sandbox
         Program p2(PO_NEW_STYLE | PO_STRICT_ARGS | PO_REQUIRE_TYPES);
