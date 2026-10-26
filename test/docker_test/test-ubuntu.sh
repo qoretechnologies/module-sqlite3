@@ -46,6 +46,14 @@ chown -R qore:qore ${MODULE_SRC_DIR}
 
 # run the tests
 cd ${MODULE_SRC_DIR}
+# the tests must load the module that this job built and installed, not one that the image already has
+loaded=$(gosu qore:qore qore -l sqlite3 -e 'printf("%s", get_module_hash().sqlite3.filename);')
+if ! grep -qxF "${loaded}" ${MODULE_SRC_DIR}/build/install_manifest.txt; then
+    echo "ERROR: the tests would load '${loaded}', which this job did not install" >&2
+    exit 1
+fi
+echo "-- the tests load ${loaded}"
+
 for test in test/*.qtest; do
     gosu qore:qore qore -b --enable-debug "$test" -vv
 done
