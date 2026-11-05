@@ -45,18 +45,17 @@ useradd -o -m -d /home/qore -u ${QORE_UID} -g ${QORE_GID} qore
 chown -R qore:qore ${MODULE_SRC_DIR}
 
 # run the tests
+export QORE_MODULE_DIR=${MODULE_SRC_DIR}/qlib:${MODULE_SRC_DIR}/build:${QORE_MODULE_DIR}
 cd ${MODULE_SRC_DIR}
-# the tests must load the module that this job built and installed, not one that the image already has
-loaded=$(gosu qore:qore qore -l sqlite3 -e 'printf("%s", get_module_hash().sqlite3.filename);')
-if ! grep -qxF "${loaded}" ${MODULE_SRC_DIR}/build/install_manifest.txt; then
-    echo "ERROR: the tests would load '${loaded}', which this job did not install" >&2
-    exit 1
-fi
-echo "-- the tests load ${loaded}"
+# the tests must load the modules that this job built, not the copies that the image already has
+${MODULE_SRC_DIR}/test/docker_test/check-loaded-modules.sh ${MODULE_SRC_DIR}/build gosu qore:qore
 
 for test in test/*.qtest; do
     gosu qore:qore qore -b --enable-debug "$test" -vv
 done
+
+# ... and they still do once the tests have run
+${MODULE_SRC_DIR}/test/docker_test/check-loaded-modules.sh ${MODULE_SRC_DIR}/build gosu qore:qore
 gosu qore:qore env QORE_TEST_SQLITE_INTERRUPT=1 \
     LD_PRELOAD="${MODULE_SRC_DIR}/build/libsqlite3_open_interrupt.so" \
     qore -b --enable-debug test/connection-setup.qtest -vv
