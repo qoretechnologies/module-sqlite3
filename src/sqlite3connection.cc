@@ -34,7 +34,7 @@ bool QoreSqlite3Connection::begin(ExceptionSink* xsink) {
     char * zErrMsg = 0;
     int rc = sqlite3_exec(m_handler, "BEGIN;", NULL, 0, &zErrMsg);
     if (rc != SQLITE_OK) {
-        xsink->raiseException("SQLITE3-BEGIN-ERROR", zErrMsg);
+        xsink->raiseException("SQLITE3-BEGIN-ERROR", "%s", zErrMsg);
         sqlite3_free(zErrMsg);
         return false;
     }
@@ -45,7 +45,7 @@ bool QoreSqlite3Connection::commit(ExceptionSink* xsink) {
     char * zErrMsg = 0;
     int rc = sqlite3_exec(m_handler, "COMMIT;", NULL, 0, &zErrMsg);
     if (rc != SQLITE_OK) {
-        xsink->raiseException("SQLITE3-COMMIT-ERROR", zErrMsg);
+        xsink->raiseException("SQLITE3-COMMIT-ERROR", "%s", zErrMsg);
         sqlite3_free(zErrMsg);
         return false;
     }
@@ -57,7 +57,7 @@ bool QoreSqlite3Connection::rollback(ExceptionSink* xsink) {
 
     int rc = sqlite3_exec(m_handler, "ROLLBACK;", NULL, 0, &zErrMsg);
     if (rc != SQLITE_OK) {
-        xsink->raiseException("SQLITE3-ROLLBACK-ERROR", zErrMsg);
+        xsink->raiseException("SQLITE3-ROLLBACK-ERROR", "%s", zErrMsg);
         sqlite3_free(zErrMsg);
         return false;
     }
