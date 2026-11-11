@@ -531,6 +531,11 @@ static void qore_sqlite3_module_init(QoreModuleInitContext& ctx, ExceptionSink& 
         | DBI_CAP_CHARSET_SUPPORT
         | DBI_CAP_HAS_NUMBER_SUPPORT
         | DBI_CAP_HAS_STATEMENT
+#ifdef DBI_CAP_LOCAL_ONLY
+        // a database is a local file, which qore_sqlite3_open() checks against the filesystem policy; the sandbox
+        // does not ask the driver for network destinations (qore#5747)
+        | DBI_CAP_LOCAL_ONLY
+#endif
     );
 
 }

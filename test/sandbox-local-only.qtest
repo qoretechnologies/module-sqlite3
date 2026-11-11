@@ -1,0 +1,69 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test-platform: macos - sandbox filesystem policy for a local database file
+
+%modern
+%requires QUnit
+%requires FsUtil
+%prepend-module-path "${SCRIPT_DIR}/../build"
+%requires sqlite3
+
+%exec-class SqliteLocalOnlyTest
+
+#! The sqlite3 driver declares DBI_CAP_LOCAL_ONLY (qore#5747)
+/** A Qore that checks DBI connections against the sandbox refuses a driver that cannot report its destinations to
+    code in a sandbox that restricts the network; sqlite3 reaches no network destination and checks the database file
+    against the filesystem policy itself.
+
+    Needs a Qore with the DBI sandbox check (DBI_CAP_LOCAL_ONLY); the test skips otherwise.
+*/
+class SqliteLocalOnlyTest inherits QUnit::Test {
+    constructor() : QUnit::Test("SqliteLocalOnlyTest", "1.0", \ARGV) {
+        addTestCase("the driver declares LocalOnly", \testCapability());
+        addTestCase("a sandbox without network access opens an allowed database file", \testNoNetwork());
+        set_return_value(main());
+    }
+
+    setUp() {
+        if (!haveDbiSandboxCheck()) {
+            testSkip("this Qore does not check DBI connections against the sandbox");
+        }
+    }
+
+    #! returns True if Qore checks DBI connections against the sandbox (qore#5747): it has DBI_CAP_LOCAL_ONLY
+    static bool haveDbiSandboxCheck() {
+        Program p(PO_NEW_STYLE);
+        try {
+            p.parse("int sub f() { return DBI_CAP_LOCAL_ONLY; }", "check");
+            return True;
+        } catch (hash<ExceptionInfo> ex) {
+            return False;
+        }
+    }
+
+    testCapability() {
+        assertTrue(inlist("LocalOnly", dbi_get_driver_capability_list("sqlite3")));
+    }
+
+    testNoNetwork() {
+        TmpDir dir("sqlite-local-only");
+        string file = dir.path + "/test.db";
+        SandboxManager sm();
+        # no network access at all; the filesystem by default
+        sm.setNetworkDefaultPolicy(False);
+        sm.setFilesystemDefaultPolicy(True);
+        Program p(PO_NEW_STYLE);
+        p.setSandboxManager(sm);
+        p.parse("int sub run(string file) {
+    Datasource ds(\"sqlite3\", \"\", \"\", file);
+    ds.open();
+    on_exit ds.close();
+    return ds.selectRow(\"select 7 as v\").v;
+}", "sqlite-local-only");
+        assertEq(7, p.callFunction("run", file));
+
+        # the filesystem policy still decides
+        sm.addFilesystemDeniedPath(file);
+        assertThrows("FILESYSTEM-ACCESS-DENIED", \p.callFunction(), ("run", file));
+    }
+}
