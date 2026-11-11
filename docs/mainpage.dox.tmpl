@@ -38,6 +38,28 @@ Datasource ds("sqlite3:@/tmp/my-file.sqlite(utf8)");
 
     Like all Qore components, the \c sqlite3 driver is thread-safe.
 
+    @subsection sqlite3sandbox Sandboxing
+
+    Code governed by a sandbox can open only a database file that the sandbox's filesystem policy allows (for reading,
+    writing and creating it); only the exact name \c ":memory:" opens an in-memory database without a check.  A
+    database name that is a URI (\c "file:...") is refused, as it can name a file, options and a VFS that the policy
+    cannot check.
+
+    The files that SQL opens are checked against the sandbox of the code that runs the statement:
+    - \c ATTACH checks its file like the database when the statement is compiled; a file name that is not a literal
+      (an expression or a bound value), or that is a URI, cannot be checked and is refused.  \c ":memory:" and the
+      empty name (a temporary database) are allowed
+    - \c VACUUM \c INTO checks its target (also one given as an expression or a bound value) when it runs, and
+      refuses a URI
+    - setting \c PRAGMA \c temp_store_directory or \c data_store_directory is refused
+
+    A refused statement raises a \c FILESYSTEM-ACCESS-DENIED exception.  SQLite also creates files next to the
+    database (its journal, write-ahead log and lock files) and temporary files in the system's temporary directory,
+    which are not checked separately.  The file of an \c ATTACH is checked when the statement is compiled and
+    opened when it runs, so a prepared statement (SQLStatement) opens it later: a file that is replaced in between
+    (a symbolic link to a file outside the sandbox root, made by code that can create one inside it) is opened as it
+    is then.
+
     @subsection sqlite3_binding_placeholders Bind Placeholders
 
     The sqlite3 driver supports the following bind placeholder formats in SQL strings:

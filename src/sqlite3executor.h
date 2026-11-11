@@ -29,6 +29,11 @@
 
 #include "sqlite3connection.h"
 
+//! Raises FILESYSTEM-ACCESS-DENIED if the last error of \a db is a statement that the sandbox refused
+/** @return -1 if an exception was raised, else 0; the recorded reason is cleared in any case
+*/
+DLLLOCAL int qore_sqlite3_take_auth_error(sqlite3* db, ExceptionSink* xsink);
+
 class QoreColumnarResult;
 
 //! Base SQL operation class
