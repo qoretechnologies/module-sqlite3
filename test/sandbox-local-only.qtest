@@ -21,6 +21,7 @@ class SqliteLocalOnlyTest inherits QUnit::Test {
     constructor() : QUnit::Test("SqliteLocalOnlyTest", "1.0", \ARGV) {
         addTestCase("the driver declares LocalOnly", \testCapability());
         addTestCase("a sandbox without network access opens an allowed database file", \testNoNetwork());
+        addTestCase("the file is checked against the policy of the code that chose it", \testChooser());
         set_return_value(main());
     }
 
@@ -65,5 +66,35 @@ class SqliteLocalOnlyTest inherits QUnit::Test {
         # the filesystem policy still decides
         sm.addFilesystemDeniedPath(file);
         assertThrows("FILESYSTEM-ACCESS-DENIED", \p.callFunction(), ("run", file));
+    }
+
+    testChooser() {
+        TmpDir inside("sqlite-chooser-in");
+        TmpDir outside("sqlite-chooser-out");
+        string in_file = inside.path + "/in.db";
+        string out_file = outside.path + "/out.db";
+        SandboxManager sm();
+        sm.setNetworkDefaultPolicy(True);
+        sm.setFilesystemDefaultPolicy(True);
+        sm.setFilesystemSandboxRoot(inside.path);
+        Program p(PO_NEW_STYLE);
+        p.setSandboxManager(sm);
+        p.parse("sub set_db(Datasource ds, string db) { ds.setDBName(db); }
+sub open_ds(Datasource ds) { ds.open(); ds.close(); }", "sqlite-chooser");
+
+        # the sandboxed code sets the file of a trusted datasource, which trusted code opens
+        Datasource ds("sqlite3", "", "", in_file);
+        p.callFunction("set_db", ds, out_file);
+        assertThrows("FILESYSTEM-ACCESS-DENIED", \ds.open());
+        assertFalse(is_file(out_file), "not created");
+        # also a URI
+        p.callFunction("set_db", ds, "file:" + out_file);
+        assertThrows("FILESYSTEM-ACCESS-DENIED", \ds.open());
+        assertFalse(is_file(out_file), "not created");
+
+        # a trusted datasource opened by the sandboxed code: its file was chosen by trusted code
+        Datasource trusted("sqlite3", "", "", out_file);
+        p.callFunction("open_ds", trusted);
+        assertTrue(is_file(out_file), "created");
     }
 }
