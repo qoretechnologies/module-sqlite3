@@ -1,0 +1,109 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test-platform: macos - sandbox filesystem policy for a local database file
+
+%modern
+%requires QUnit
+%requires FsUtil
+%prepend-module-path "${SCRIPT_DIR}/../build"
+%requires sqlite3
+
+%exec-class SqliteLocalOnlyTest
+
+#! The sqlite3 driver declares DBI_CAP_LOCAL_ONLY (qore#5747)
+/** A Qore that checks DBI connections against the sandbox refuses a driver that cannot report its destinations to
+    code in a sandbox that restricts the network; sqlite3 reaches no network destination and checks the database file
+    against the filesystem policy itself.
+
+    Needs a Qore with the DBI sandbox check (DBI_CAP_LOCAL_ONLY); the test skips otherwise.
+*/
+class SqliteLocalOnlyTest inherits QUnit::Test {
+    constructor() : QUnit::Test("SqliteLocalOnlyTest", "1.0", \ARGV) {
+        addTestCase("the driver declares LocalOnly", \testCapability());
+        addTestCase("a sandbox without network access opens an allowed database file", \testNoNetwork());
+        addTestCase("the file is checked against the policy of the code that chose it", \testChooser());
+        set_return_value(main());
+    }
+
+    setUp() {
+        if (!haveDbiSandboxCheck()) {
+            testSkip("this Qore does not check DBI connections against the sandbox");
+        }
+    }
+
+    #! returns True if Qore checks DBI connections against the sandbox (qore#5747): it has DBI_CAP_LOCAL_ONLY
+    static bool haveDbiSandboxCheck() {
+        Program p(PO_NEW_STYLE);
+        try {
+            p.parse("int sub f() { return DBI_CAP_LOCAL_ONLY; }", "check");
+            return True;
+        } catch (hash<ExceptionInfo> ex) {
+            return False;
+        }
+    }
+
+    testCapability() {
+        assertTrue(inlist("LocalOnly", dbi_get_driver_capability_list("sqlite3")));
+    }
+
+    testNoNetwork() {
+        TmpDir dir("sqlite-local-only");
+        string file = dir.path + "/test.db";
+        SandboxManager sm();
+        # no network access at all; the filesystem by default
+        sm.setNetworkDefaultPolicy(False);
+        sm.setFilesystemDefaultPolicy(True);
+        Program p(PO_NEW_STYLE);
+        p.setSandboxManager(sm);
+        p.parse("int sub run(string file) {
+    Datasource ds(\"sqlite3\", \"\", \"\", file);
+    ds.open();
+    on_exit ds.close();
+    return ds.selectRow(\"select 7 as v\").v;
+}", "sqlite-local-only");
+        assertEq(7, p.callFunction("run", file));
+
+        # the filesystem policy still decides
+        sm.addFilesystemDeniedPath(file);
+        assertThrows("FILESYSTEM-ACCESS-DENIED", \p.callFunction(), ("run", file));
+    }
+
+    testChooser() {
+        TmpDir inside("sqlite-chooser-in");
+        TmpDir outside("sqlite-chooser-out");
+        string in_file = inside.path + "/in.db";
+        string out_file = outside.path + "/out.db";
+        SandboxManager sm();
+        sm.setNetworkDefaultPolicy(True);
+        sm.setFilesystemDefaultPolicy(True);
+        sm.setFilesystemSandboxRoot(inside.path);
+        Program p(PO_NEW_STYLE);
+        p.setSandboxManager(sm);
+        p.parse("sub set_db(Datasource ds, string db) { ds.setDBName(db); }
+sub open_ds(Datasource ds) { ds.open(); ds.close(); }
+sub open_pool(string db) { DatasourcePool pool(\"sqlite3\", \"\", \"\", db); on_exit delete pool; pool.selectRow(\"select 1 as v\"); }
+int sub use_pool(DatasourcePool pool) { return pool.selectRow(\"select 1 as v\").v; }", "sqlite-chooser");
+
+        # the sandboxed code sets the file of a trusted datasource, which trusted code opens
+        Datasource ds("sqlite3", "", "", in_file);
+        p.callFunction("set_db", ds, out_file);
+        assertThrows("FILESYSTEM-ACCESS-DENIED", \ds.open());
+        assertFalse(is_file(out_file), "not created");
+        # also a URI, which is refused as a URI, not as a path (a URI inside the sandbox root as well)
+        p.callFunction("set_db", ds, "file:" + in_file);
+        assertThrows("FILESYSTEM-ACCESS-DENIED", "URI", \ds.open());
+        assertFalse(is_file(out_file), "not created");
+
+        # a sandboxed pool's connections are checked against the sandbox
+        assertThrows("FILESYSTEM-ACCESS-DENIED", \p.callFunction(), ("open_pool", out_file));
+        assertFalse(is_file(out_file), "not created");
+
+        # a trusted datasource and pool used by the sandboxed code: their file was chosen by trusted code
+        Datasource trusted("sqlite3", "", "", out_file);
+        p.callFunction("open_ds", trusted);
+        assertTrue(is_file(out_file), "created");
+        DatasourcePool pool("sqlite3", "", "", out_file);
+        on_exit delete pool;
+        assertEq(1, p.callFunction("use_pool", pool));
+    }
+}

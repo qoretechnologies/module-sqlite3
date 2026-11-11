@@ -40,10 +40,14 @@ Datasource ds("sqlite3:@/tmp/my-file.sqlite(utf8)");
 
     @subsection sqlite3sandbox Sandboxing
 
-    Code governed by a sandbox can open only a database file that the sandbox's filesystem policy allows (for reading,
-    writing and creating it); only the exact name \c ":memory:" opens an in-memory database without a check.  A
-    database name that is a URI (\c "file:...") is refused, as it can name a file, options and a VFS that the policy
-    cannot check.
+    The database file of a connection is checked against the filesystem policy of a sandbox (for reading, writing and
+    creating it); only the exact name \c ":memory:" opens an in-memory database without a check.  A database name
+    that is a URI (\c "file:...") is refused under a sandbox that restricts network or filesystem access, as it can
+    name a file, options and storage (another VFS, a shared in-memory database) that the policy cannot check.  In a
+    %Qore version that checks DBI connections against the sandbox, the policy is that of the code that chose the
+    file (that created the datasource or set its database name), also when other code opens the connection: a file
+    that sandboxed code set on a trusted datasource is refused, and a trusted datasource (or pool) that sandboxed
+    code opens is not; in an earlier version, the policy of the code that opens the connection.
 
     The files that SQL opens are checked against the sandbox of the code that runs the statement:
     - \c ATTACH checks its file like the database when the statement is compiled; a file name that is not a literal
@@ -55,10 +59,10 @@ Datasource ds("sqlite3:@/tmp/my-file.sqlite(utf8)");
 
     A refused statement raises a \c FILESYSTEM-ACCESS-DENIED exception.  SQLite also creates files next to the
     database (its journal, write-ahead log and lock files) and temporary files in the system's temporary directory,
-    which are not checked separately.  The file of an \c ATTACH is checked when the statement is compiled and
-    opened when it runs, so a prepared statement (SQLStatement) opens it later: a file that is replaced in between
-    (a symbolic link to a file outside the sandbox root, made by code that can create one inside it) is opened as it
-    is then.
+    which are not checked separately.  A file is checked by its path, so a file that is replaced after the check (a
+    symbolic link to a file outside the sandbox root, made by code that can create one inside it) is opened as it is
+    then; this applies to the database file and to \c ATTACH, whose file is checked when the statement is compiled
+    and opened when it runs, which for a prepared statement (SQLStatement) can be much later.
 
     @subsection sqlite3_binding_placeholders Bind Placeholders
 

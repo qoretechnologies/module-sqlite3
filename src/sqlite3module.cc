@@ -189,6 +189,19 @@ static sqlite3* qore_sqlite3_init(Datasource* ds, ExceptionSink* xsink) {
 
     // Check filesystem sandbox access (skip for an in-memory database)
     const char* dbname = ds->getDBName();
+#ifdef QORE_HAS_DBI_CHECK_CONNECT_PATH
+    // the file is checked against the policy of the code that chose it (captured on the Datasource), not of the code
+    // that opens the connection (qore#5747); a URI cannot be checked
+    if (!strncasecmp(dbname, "file:", 5) && qore_dbi_connect_restricted(ds)) {
+        xsink->raiseException("FILESYSTEM-ACCESS-DENIED", "the SQLite database '%s' is a URI, which cannot be checked "
+            "against the sandbox", dbname);
+        return nullptr;
+    }
+    if (strcmp(dbname, ":memory:")
+        && qore_dbi_check_connect_path(ds, dbname, QSEC_READ | QSEC_WRITE | QSEC_CREATE, xsink)) {
+        return nullptr;
+    }
+#else
     {
         QoreSandboxManagerHelper smh(QoreSandboxManagerHelper::Policy);
         if (smh) {
@@ -206,6 +219,7 @@ static sqlite3* qore_sqlite3_init(Datasource* ds, ExceptionSink* xsink) {
             }
         }
     }
+#endif
 
     sqlite3* db = nullptr;
     int ret = sqlite3_open(ds->getDBName(), &db);
@@ -531,6 +545,11 @@ static void qore_sqlite3_module_init(QoreModuleInitContext& ctx, ExceptionSink& 
         | DBI_CAP_CHARSET_SUPPORT
         | DBI_CAP_HAS_NUMBER_SUPPORT
         | DBI_CAP_HAS_STATEMENT
+#ifdef DBI_CAP_LOCAL_ONLY
+        // a database is a local file, which qore_sqlite3_init() checks against the filesystem policy; the sandbox
+        // does not ask the driver for network destinations (qore#5747)
+        | DBI_CAP_LOCAL_ONLY
+#endif
     );
 
 }
