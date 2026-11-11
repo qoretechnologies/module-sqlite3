@@ -57,6 +57,10 @@ sub run() {
 
     pendingInterrupt() {
         SandboxManager sm();
+        # the manager is there for interrupts only: it allows every destination, so the connection is not
+        # checked against a network or filesystem policy (qore#5747)
+        sm.setNetworkDefaultPolicy(True);
+        sm.setFilesystemDefaultPolicy(True);
         Program p = worker(sm);
         sm.requestInterrupt();
         assertThrows("PROGRAM-INTERRUPTED", \p.callFunction(), "run");
@@ -64,6 +68,10 @@ sub run() {
 
     nativeInterrupt() {
         SandboxManager sm();
+        # the manager is there for interrupts only: it allows every destination, so the connection is not
+        # checked against a network or filesystem policy (qore#5747)
+        sm.setNetworkDefaultPolicy(True);
+        sm.setFilesystemDefaultPolicy(True);
         Program p = worker(sm);
         assertThrows("PROGRAM-INTERRUPTED", \p.callFunction(), "run");
     }
