@@ -1,0 +1,232 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test-platform: macos - sandbox filesystem policy for the files that SQLite opens
+
+%modern
+%requires QUnit
+%requires FsUtil
+%prepend-module-path "${SCRIPT_DIR}/../build"
+%requires sqlite3
+
+%exec-class SqliteSandboxSqlFilesTest
+
+#! The files that SQL opens are checked against the sandbox of the code that runs it
+/** ATTACH and VACUUM INTO open the file named in the SQL, a URI database name names a file that the path check cannot
+    see, and PRAGMA temp_store_directory lets SQLite create files in any directory: in a sandbox, a file name is checked
+    against the filesystem policy like the database itself, and what cannot be checked (a name that is not a literal,
+    a URI, a directory) is refused.  Each refused case also checks that the file was not created.
+
+    The sandbox's filesystem root is a temporary directory of the test; another one is outside it.
+*/
+class SqliteSandboxSqlFilesTest inherits QUnit::Test {
+    private {
+        #! the sandbox root
+        TmpDir inside;
+        #! outside the sandbox root
+        TmpDir outside;
+        #! the sandboxed Program
+        Program p;
+        #! the database of the sandboxed code
+        string db;
+    }
+
+    constructor() : QUnit::Test("SqliteSandboxSqlFilesTest", "1.0", \ARGV) {
+        inside = new TmpDir("sqlite-sandbox-in");
+        outside = new TmpDir("sqlite-sandbox-out");
+        db = inside.path + "/main.db";
+        SandboxManager sm();
+        sm.setFilesystemSandboxRoot(inside.path);
+        p = new Program(PO_NO_CHILD_PO_RESTRICTIONS);
+        p.loadModule("sqlite3");
+        p.parse("%modern
+# VACUUM cannot run in a transaction: it needs auto-commit
+string sub run_sql(string db, string sql, *list<auto> args, bool autocommit = False) {
+    Datasource ds(\"sqlite3\", \"\", \"\", db);
+    ds.setAutoCommit(autocommit);
+    ds.open();
+    on_exit ds.close();
+    try {
+        ds.vexec(sql, args);
+        if (!autocommit) {
+            ds.commit();
+        }
+        return \"NONE\";
+    } catch (hash<ExceptionInfo> ex) {
+        if (!autocommit) {
+            ds.rollback();
+        }
+        return ex.err;
+    }
+}
+
+string sub run_stmt(string db, string sql) {
+    Datasource ds(\"sqlite3\", \"\", \"\", db);
+    ds.open();
+    on_exit ds.close();
+    SQLStatement s(ds);
+    try {
+        s.prepare(sql);
+        s.exec();
+        s.close();
+        ds.commit();
+        return \"NONE\";
+    } catch (hash<ExceptionInfo> ex) {
+        ds.rollback();
+        return ex.err;
+    }
+}
+
+string sub try_open(string db) {
+    try {
+        Datasource ds(\"sqlite3\", \"\", \"\", db);
+        ds.open();
+        ds.close();
+        return \"NONE\";
+    } catch (hash<ExceptionInfo> ex) {
+        return ex.err;
+    }
+}", "sqlite-sandbox-sql-files");
+        p.setSandboxManager(sm);
+
+        addTestCase("ATTACH is checked", \testAttach());
+        addTestCase("an ATTACH file name that is not a literal is refused", \testAttachExpression());
+        addTestCase("an ATTACH URI is refused", \testAttachUri());
+        addTestCase("in-memory and temporary ATTACH databases are allowed", \testAttachMemory());
+        addTestCase("VACUUM INTO is checked", \testVacuumInto());
+        addTestCase("plain VACUUM works in a sandbox", \testVacuum());
+        addTestCase("a trailing ATTACH is refused and not run", \testTrailingAttach());
+        addTestCase("blob and bareword ATTACH names are checked", \testAttachNames());
+        addTestCase("setting the temporary directory is refused", \testTempDirectory());
+        addTestCase("a prepared ATTACH is checked", \testStatement());
+        addTestCase("a URI database name is refused", \testOpenUri());
+        addTestCase("only the exact in-memory name skips the check", \testMemoryName());
+        addTestCase("without a sandbox, SQL files are not checked", \testNoSandbox());
+        set_return_value(main());
+    }
+
+    private string exec(string sql, *list<auto> args, bool autocommit = False) {
+        return p.callFunction("run_sql", db, sql, args, autocommit);
+    }
+
+    testAttach() {
+        assertEq("NONE", exec(sprintf("attach database '%s/a.db' as a", inside.path)));
+        string file = outside.path + "/a.db";
+        assertEq("FILESYSTEM-ACCESS-DENIED", exec(sprintf("attach database '%s' as a", file)));
+        assertFalse(is_file(file), "not created");
+        # a relative name is resolved against the current directory, which is outside the sandbox root
+        assertEq("FILESYSTEM-ACCESS-DENIED", exec("attach database 'qore-sqlite-sandbox-relative.db' as a"));
+        assertFalse(is_file("qore-sqlite-sandbox-relative.db"), "not created");
+    }
+
+    testAttachExpression() {
+        string file = outside.path + "/e.db";
+        assertEq("FILESYSTEM-ACCESS-DENIED", exec(sprintf("attach database ('%s' || '') as e", file)));
+        assertEq("FILESYSTEM-ACCESS-DENIED", exec(sprintf("attach database (select '%s') as e", file)));
+        # a bound value is not a literal either, also for a file inside the sandbox root
+        assertEq("FILESYSTEM-ACCESS-DENIED", exec("attach database %v as e", (file,)));
+        assertEq("FILESYSTEM-ACCESS-DENIED", exec("attach database %v as e", (inside.path + "/e.db",)));
+        assertFalse(is_file(file), "not created");
+    }
+
+    testAttachUri() {
+        string file = outside.path + "/u.db";
+        assertEq("FILESYSTEM-ACCESS-DENIED", exec(sprintf("attach database 'file:%s' as u", file)));
+        assertEq("FILESYSTEM-ACCESS-DENIED", exec(sprintf("attach database 'FILE://localhost%s' as u", file)));
+        # also for a file inside the sandbox root: the URI's options cannot be checked
+        assertEq("FILESYSTEM-ACCESS-DENIED", exec(sprintf("attach database 'file:%s/u.db?vfs=unix' as u",
+            inside.path)));
+        assertFalse(is_file(file), "not created");
+    }
+
+    testAttachMemory() {
+        assertEq("NONE", exec("attach database ':memory:' as m"));
+        assertEq("NONE", exec("attach database '' as t"));
+    }
+
+    testVacuumInto() {
+        string file = outside.path + "/v.db";
+        assertEq("FILESYSTEM-ACCESS-DENIED", exec(sprintf("vacuum into '%s'", file), NOTHING, True));
+        assertEq("FILESYSTEM-ACCESS-DENIED", exec(sprintf("vacuum main into ('%s' || '')", file), NOTHING, True));
+        assertFalse(is_file(file), "not created");
+        string in_file = inside.path + "/v.db";
+        assertEq("NONE", exec(sprintf("vacuum into '%s'", in_file), NOTHING, True));
+        assertTrue(is_file(in_file), "created inside the sandbox root");
+
+        # SQLite attaches the evaluated target when VACUUM INTO runs, so a bound value is checked as well
+        string bound_out = outside.path + "/vb.db";
+        assertEq("FILESYSTEM-ACCESS-DENIED", exec("vacuum into %v", (bound_out,), True));
+        assertFalse(is_file(bound_out), "not created");
+        string bound_in = inside.path + "/vb.db";
+        assertEq("NONE", exec("vacuum into %v", (bound_in,), True));
+        assertTrue(is_file(bound_in), "created inside the sandbox root");
+        # a URI target
+        assertEq("FILESYSTEM-ACCESS-DENIED", exec(sprintf("vacuum into 'file:%s/vu.db'", inside.path), NOTHING,
+            True));
+        assertFalse(is_file(inside.path + "/vu.db"), "not created");
+    }
+
+    testVacuum() {
+        # VACUUM attaches a temporary database with an empty name
+        assertEq("NONE", exec("vacuum", NOTHING, True));
+    }
+
+    testTrailingAttach() {
+        string file = outside.path + "/t.db";
+        string err = exec(sprintf("select 1; attach database '%s' as t", file));
+        assertNeq("NONE", err);
+        assertFalse(is_file(file), "not created");
+        # the refusal is not reported by a later statement
+        assertEq("NONE", exec("select 1"));
+    }
+
+    testAttachNames() {
+        # a blob literal is not a string literal
+        string file = outside.path + "/b.db";
+        assertEq("FILESYSTEM-ACCESS-DENIED", exec(sprintf("attach database x'%s' as b", file.toBinary().toHex())));
+        assertFalse(is_file(file), "not created");
+        # a bareword name is a file in the current directory, which is outside the sandbox root
+        assertEq("FILESYSTEM-ACCESS-DENIED", exec("attach database qore_sqlite_sandbox_bareword as w"));
+        assertFalse(is_file("qore_sqlite_sandbox_bareword"), "not created");
+    }
+
+    testTempDirectory() {
+        assertEq("FILESYSTEM-ACCESS-DENIED", exec(sprintf("pragma temp_store_directory = '%s'", outside.path)));
+        assertEq("FILESYSTEM-ACCESS-DENIED", exec(sprintf("PRAGMA Temp_Store_Directory = '%s'", inside.path)));
+        # reading it is allowed
+        assertEq("NONE", exec("pragma temp_store_directory"));
+    }
+
+    testStatement() {
+        string file = outside.path + "/s.db";
+        assertEq("FILESYSTEM-ACCESS-DENIED", p.callFunction("run_stmt", db, sprintf("attach database '%s' as s", file)));
+        assertFalse(is_file(file), "not created");
+        assertEq("NONE", p.callFunction("run_stmt", db, sprintf("attach database '%s/s.db' as s", inside.path)));
+    }
+
+    testOpenUri() {
+        string file = outside.path + "/o.db";
+        assertEq("FILESYSTEM-ACCESS-DENIED", p.callFunction("try_open", "file:" + file));
+        assertEq("FILESYSTEM-ACCESS-DENIED", p.callFunction("try_open", "File:" + file));
+        assertFalse(is_file(file), "not created");
+        # also for a file inside the sandbox root
+        assertEq("FILESYSTEM-ACCESS-DENIED", p.callFunction("try_open", "file:" + inside.path + "/o.db"));
+    }
+
+    testMemoryName() {
+        assertEq("NONE", p.callFunction("try_open", ":memory:"));
+        # a URI file whose name starts like the in-memory URI
+        assertEq("FILESYSTEM-ACCESS-DENIED", p.callFunction("try_open", "file::memory:x"));
+        assertFalse(is_file(":memory:x"), "not created");
+    }
+
+    testNoSandbox() {
+        string file = outside.path + "/n.db";
+        Datasource ds("sqlite3", "", "", inside.path + "/plain.db");
+        ds.open();
+        on_exit ds.close();
+        ds.exec(sprintf("attach database '%s' as n", file));
+        ds.exec("create table n.t (i int)");
+        ds.commit();
+        assertTrue(is_file(file), "created without a sandbox");
+    }
+}

@@ -465,6 +465,10 @@ QoreValue QoreSqlite3ExecBase::columnValue(sqlite3_stmt * stmt, int index) {
     error without matching the message text.
 */
 static void raise_sqlite3_error(ExceptionSink* xsink, const char* err, sqlite3* db) {
+    // a statement refused by the sandbox
+    if (qore_sqlite3_take_auth_error(db, xsink)) {
+        return;
+    }
     ReferenceHolder<QoreHashNode> arg(new QoreHashNode(autoTypeInfo), xsink);
     arg->setKeyValue("code", sqlite3_errcode(db), xsink);
     arg->setKeyValue("extended_code", sqlite3_extended_errcode(db), xsink);
@@ -496,6 +500,11 @@ static int check_no_trailing_statement(sqlite3* db, const char* tail, const char
             sqlite3_finalize(next);
         }
         if (rc != SQLITE_OK || next) {
+            // a statement that the sandbox refused is reported as a statement that would not be run
+            if (rc != SQLITE_OK) {
+                ExceptionSink ignored;
+                qore_sqlite3_take_auth_error(nullptr, &ignored);
+            }
             while (isspace(static_cast<unsigned char>(*tail))) {
                 ++tail;
             }
@@ -736,7 +745,9 @@ int QoreSqlite3PreparedStatement::prepare(const QoreString& sql, const QoreListN
     const char* tail = nullptr;
     int rc = sqlite3_prepare_v2(conn->handler(), this->sql->c_str(), -1, &stmt, &tail);
     if (rc != SQLITE_OK) {
-        xsink->raiseException("SQLITE3-PREPARE-ERROR", "%s", sqlite3_errmsg(conn->handler()));
+        if (!qore_sqlite3_take_auth_error(conn->handler(), xsink)) {
+            xsink->raiseException("SQLITE3-PREPARE-ERROR", "%s", sqlite3_errmsg(conn->handler()));
+        }
         return -1;
     }
     if (check_no_trailing_statement(conn->handler(), tail, "SQLITE3-PREPARE-ERROR", xsink)) {

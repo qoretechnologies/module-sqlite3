@@ -6,6 +6,9 @@
 
     @section sqlite_1_2_0 sqlite3 Driver Version 1.2.0
 
+    - code in a sandbox can open only the files that its filesystem policy allows, also through SQL: the database
+      (a URI name is refused), \c ATTACH, \c VACUUM \c INTO and the temporary and data directory pragmas are
+      checked (see @ref sqlite3sandbox)
     - failed connection attempts now release the SQLite handle returned with an error;
       cancellation during open or initialization closes the handle and preserves the cancellation exception
     - raised the build language requirement to C++17, matching the current Qore headers

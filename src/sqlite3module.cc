@@ -26,6 +26,7 @@
 #include <ctype.h>
 #include <strings.h>
 #include <memory>
+#include <string>
 
 #include <qore/Qore.h>
 #include <qore/QoreSandboxManager.h>
@@ -39,6 +40,101 @@
 #endif
 #include "sqlite3functions.h"
 #include "config.h"
+
+//! the exception code and the reason why the authorizer refused a statement in this thread, for
+//! qore_sqlite3_take_auth_error()
+static thread_local std::string qore_sqlite3_auth_err, qore_sqlite3_auth_denial;
+
+//! Refuses a statement in the authorizer, recording the exception code and the reason
+static int qore_sqlite3_auth_deny(const char* reason, const char* err = "FILESYSTEM-ACCESS-DENIED") {
+    try {
+        qore_sqlite3_auth_err = err;
+        qore_sqlite3_auth_denial = reason;
+    } catch (...) {
+        // the statement is refused in any case
+    }
+    return SQLITE_DENY;
+}
+
+//! Checks the files that SQL opens against the sandbox of the code that compiles the statement
+/** ATTACH opens the file named by its argument, VACUUM INTO its target (when it runs, SQLite attaches the evaluated
+    name, so the authorizer sees it as a literal then), and PRAGMA temp_store_directory and data_store_directory let
+    SQLite create files in any directory; without a sandbox, all are allowed.  In a sandbox, an ATTACH argument that
+    is not a literal (which SQLite passes as NULL when it compiles the statement) or a URI cannot be checked and is
+    refused, as is setting a directory, and a file name is checked against the filesystem policy as for the database
+    itself.  The authorizer runs in the thread that compiles the statement (also when sqlite3_step() compiles it again)
+    or, for VACUUM INTO, runs it.
+
+    No C++ exception may leave this function, which SQLite calls.
+*/
+static int qore_sqlite3_authorizer_intern(int code, const char* arg1, const char* arg2) {
+    if (code == SQLITE_PRAGMA) {
+        // only setting a directory opens files elsewhere
+        if (!arg1 || !arg2 || (strcasecmp(arg1, "temp_store_directory") && strcasecmp(arg1, "data_store_directory"))) {
+            return SQLITE_OK;
+        }
+    } else if (code != SQLITE_ATTACH) {
+        return SQLITE_OK;
+    }
+    QoreSandboxManagerHelper smh(QoreSandboxManagerHelper::Policy);
+    if (!smh) {
+        return SQLITE_OK;
+    }
+    if (code == SQLITE_PRAGMA) {
+        return qore_sqlite3_auth_deny("setting the SQLite temporary or data directory cannot be checked against the "
+            "sandbox");
+    }
+    if (!arg1) {
+        return qore_sqlite3_auth_deny("an SQLite ATTACH or VACUUM INTO file name that is not a literal cannot be "
+            "checked against the sandbox");
+    }
+    // an empty name is a private temporary database
+    if (!*arg1 || !strcmp(arg1, ":memory:")) {
+        return SQLITE_OK;
+    }
+    if (!strncasecmp(arg1, "file:", 5)) {
+        return qore_sqlite3_auth_deny("an SQLite ATTACH or VACUUM INTO file name that is a URI cannot be checked "
+            "against the sandbox");
+    }
+    ExceptionSink xsink;
+    if (!smh->checkFilesystemAccess(arg1, QSEC_READ | QSEC_WRITE | QSEC_CREATE, &xsink)) {
+        // the exception of the check (FILESYSTEM-ACCESS-DENIED, or an error resolving the path)
+        QoreValue err = xsink.getExceptionErr();
+        QoreValue desc = xsink.getExceptionDesc();
+        int rc = qore_sqlite3_auth_deny(desc.getType() == NT_STRING ? desc.get<const QoreStringNode>()->c_str()
+            : "access to the file is denied by the sandbox",
+            err.getType() == NT_STRING ? err.get<const QoreStringNode>()->c_str() : "FILESYSTEM-ACCESS-DENIED");
+        xsink.clear();
+        return rc;
+    }
+    return SQLITE_OK;
+}
+
+static int qore_sqlite3_authorizer(void*, int code, const char* arg1, const char* arg2, const char*, const char*) {
+    if (code != SQLITE_ATTACH && code != SQLITE_PRAGMA) {
+        return SQLITE_OK;
+    }
+    try {
+        return qore_sqlite3_authorizer_intern(code, arg1, arg2);
+    } catch (...) {
+        // out of memory, for example: the statement is refused
+        return qore_sqlite3_auth_deny("the SQLite statement could not be checked against the sandbox");
+    }
+}
+
+int qore_sqlite3_take_auth_error(sqlite3* db, ExceptionSink* xsink) {
+    if (qore_sqlite3_auth_denial.empty()) {
+        return 0;
+    }
+    std::string err, reason;
+    err.swap(qore_sqlite3_auth_err);
+    reason.swap(qore_sqlite3_auth_denial);
+    if (!db || sqlite3_errcode(db) != SQLITE_AUTH) {
+        return 0;
+    }
+    xsink->raiseException(err.empty() ? "FILESYSTEM-ACCESS-DENIED" : err.c_str(), "%s", reason.c_str());
+    return -1;
+}
 
 static void qore_sqlite3_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink);
 static void qore_sqlite3_module_ns_init(QoreNamespace* rns, QoreNamespace* qns, ExceptionSink& xsink);
@@ -91,13 +187,21 @@ static sqlite3* qore_sqlite3_init(Datasource* ds, ExceptionSink* xsink) {
         return nullptr;
     }
 
-    // Check filesystem sandbox access (skip for in-memory databases)
+    // Check filesystem sandbox access (skip for an in-memory database)
     const char* dbname = ds->getDBName();
-    if (strcmp(dbname, ":memory:") != 0 && strncmp(dbname, "file::memory:", 13) != 0) {
+    {
         QoreSandboxManagerHelper smh(QoreSandboxManagerHelper::Policy);
         if (smh) {
+            // a URI (with URI support, which the library can have by default) names a file, options and a VFS that
+            // the path check cannot see
+            if (!strncasecmp(dbname, "file:", 5)) {
+                xsink->raiseException("FILESYSTEM-ACCESS-DENIED", "the SQLite database '%s' is a URI, which cannot "
+                    "be checked against the sandbox", dbname);
+                return nullptr;
+            }
             // SQLite databases need read/write access (or create for new files)
-            if (!smh->checkFilesystemAccess(dbname, QSEC_READ | QSEC_WRITE | QSEC_CREATE, xsink)) {
+            if (strcmp(dbname, ":memory:")
+                && !smh->checkFilesystemAccess(dbname, QSEC_READ | QSEC_WRITE | QSEC_CREATE, xsink)) {
                 return nullptr;
             }
         }
@@ -117,6 +221,13 @@ static sqlite3* qore_sqlite3_init(Datasource* ds, ExceptionSink* xsink) {
 
     if (!db) {
         xsink->outOfMemory();
+        return nullptr;
+    }
+
+    // checks the files that SQL opens (ATTACH, VACUUM INTO) against the sandbox of the code that runs it
+    if (sqlite3_set_authorizer(db, qore_sqlite3_authorizer, nullptr) != SQLITE_OK) {
+        xsink->raiseException("SQLITE3-CONNECT-ERROR", "cannot set the authorizer of %s: %s", ds->getDBName(),
+            sqlite3_errmsg(db));
         return nullptr;
     }
 
