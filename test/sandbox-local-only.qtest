@@ -80,21 +80,30 @@ class SqliteLocalOnlyTest inherits QUnit::Test {
         Program p(PO_NEW_STYLE);
         p.setSandboxManager(sm);
         p.parse("sub set_db(Datasource ds, string db) { ds.setDBName(db); }
-sub open_ds(Datasource ds) { ds.open(); ds.close(); }", "sqlite-chooser");
+sub open_ds(Datasource ds) { ds.open(); ds.close(); }
+sub open_pool(string db) { DatasourcePool pool(\"sqlite3\", \"\", \"\", db); on_exit delete pool; pool.selectRow(\"select 1 as v\"); }
+int sub use_pool(DatasourcePool pool) { return pool.selectRow(\"select 1 as v\").v; }", "sqlite-chooser");
 
         # the sandboxed code sets the file of a trusted datasource, which trusted code opens
         Datasource ds("sqlite3", "", "", in_file);
         p.callFunction("set_db", ds, out_file);
         assertThrows("FILESYSTEM-ACCESS-DENIED", \ds.open());
         assertFalse(is_file(out_file), "not created");
-        # also a URI
-        p.callFunction("set_db", ds, "file:" + out_file);
-        assertThrows("FILESYSTEM-ACCESS-DENIED", \ds.open());
+        # also a URI, which is refused as a URI, not as a path (a URI inside the sandbox root as well)
+        p.callFunction("set_db", ds, "file:" + in_file);
+        assertThrows("FILESYSTEM-ACCESS-DENIED", "URI", \ds.open());
         assertFalse(is_file(out_file), "not created");
 
-        # a trusted datasource opened by the sandboxed code: its file was chosen by trusted code
+        # a sandboxed pool's connections are checked against the sandbox
+        assertThrows("FILESYSTEM-ACCESS-DENIED", \p.callFunction(), ("open_pool", out_file));
+        assertFalse(is_file(out_file), "not created");
+
+        # a trusted datasource and pool used by the sandboxed code: their file was chosen by trusted code
         Datasource trusted("sqlite3", "", "", out_file);
         p.callFunction("open_ds", trusted);
         assertTrue(is_file(out_file), "created");
+        DatasourcePool pool("sqlite3", "", "", out_file);
+        on_exit delete pool;
+        assertEq(1, p.callFunction("use_pool", pool));
     }
 }
