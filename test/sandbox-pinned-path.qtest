@@ -72,6 +72,7 @@ int sub open_close(string db, int count) {
         addTestCase("a pinned database has no shared memory (no WAL mode)", \testWal());
         addTestCase("a file of the database that is a link is not used", \testDerivedLink());
         addTestCase("a hot journal cannot name a super-journal outside of the directory", \testSuperJournal());
+        addTestCase("a database path that is a link to an allowed file is opened", \testLinkedDatabase());
         addTestCase("a denied database is not opened", \testDenied());
         addTestCase("a connection closed releases its pinned directory", \testRelease());
         addTestCase("a directory replaced after the check is not used", \testDirSwap());
@@ -245,6 +246,28 @@ int sub open_close(string db, int count) {
         }
         assertTrue(is_file(victim), "the file outside of the sandbox still exists");
         assertEq("not a journal", ReadOnlyFile::readTextFile(victim));
+    }
+
+    testLinkedDatabase() {
+        TmpDir dir("sqlite-pin-linked");
+        TmpDir outside("sqlite-pin-linked-out");
+        string real = dir.path + "/data";
+        mkdir(real);
+        Program p = sandboxed(dir.path, QSEC_READ | QSEC_WRITE | QSEC_CREATE);
+        assertEq(("a",), p.callFunction("write_rows", real + "/r.db", NOTHING, "a"));
+        # the database name is a link to a database in the sandbox: the database that it names is checked and opened,
+        # with its journal next to it
+        symlink(real + "/r.db", dir.path + "/l.db");
+        assertEq(("a", "b"), p.callFunction("write_rows", dir.path + "/l.db", "persist", "b"));
+        assertTrue(is_file(real + "/r.db-journal"), "the journal is next to the database");
+        # a link to a database outside of the sandbox is denied
+        Datasource ods("sqlite3", "", "", outside.path + "/o.db");
+        ods.open();
+        ods.exec("create table t (v varchar(20))");
+        ods.commit();
+        ods.close();
+        symlink(outside.path + "/o.db", dir.path + "/o.db");
+        assertThrows("FILESYSTEM-ACCESS-DENIED", \p.callFunction(), ("read_rows", dir.path + "/o.db"));
     }
 
     testDenied() {

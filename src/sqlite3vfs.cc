@@ -30,6 +30,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <sys/stat.h>
 #include <new>
 
 #ifndef SQLITE_OPEN_SUPER_JOURNAL
@@ -217,7 +218,19 @@ void qore_sqlite3_pinned_vfs_done() {
 
 int qore_sqlite3_pin_database(Datasource* ds, const char* path, std::string& name, ExceptionSink* xsink) {
     std::unique_ptr<PinnedDatabase> db(new PinnedDatabase);
-    db->pin = qore_dbi_pin_connect_path(ds, path, QSEC_READ | QSEC_WRITE | QSEC_CREATE, xsink);
+    // a database name that is a link: the name is checked for creating as any other database name, and the link is
+    // followed, so that the file that it names is checked and pinned with its directory (a link would not be opened
+    // through the directory pinned with the name, as the files of a pinned database are opened without following a
+    // link); a link that appears or disappears after this test is refused or opened as checked
+    struct stat lbuf;
+    if (!lstat(path, &lbuf) && S_ISLNK(lbuf.st_mode)) {
+        if (qore_dbi_check_connect_path(ds, path, QSEC_READ | QSEC_WRITE | QSEC_CREATE, xsink)) {
+            return -1;
+        }
+        db->pin = qore_dbi_pin_connect_path(ds, path, QSEC_READ | QSEC_WRITE, xsink);
+    } else {
+        db->pin = qore_dbi_pin_connect_path(ds, path, QSEC_READ | QSEC_WRITE | QSEC_CREATE, xsink);
+    }
     if (!db->pin) {
         return -1;
     }
