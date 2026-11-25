@@ -32,6 +32,11 @@
 #include <mutex>
 #include <new>
 
+#ifndef SQLITE_OPEN_SUPER_JOURNAL
+// SQLite before 3.33
+#define SQLITE_OPEN_SUPER_JOURNAL SQLITE_OPEN_MASTER_JOURNAL
+#endif
+
 /*  The database file of a connection that a sandbox restricts is pinned (qore#7605): the directory that holds it is
     held by the pinned path, and the database is opened with the procfs link of that directory and its name
     ("/proc/self/fd/<dirfd>/<name>"), so that the files that SQLite derives from the database name (the name and a
@@ -117,8 +122,28 @@ const sqlite3_io_methods* get_no_shm_methods(const sqlite3_io_methods* methods) 
     }
 }
 
+//! returns true if \a zName is the file of a pinned database or a file derived from its name
+bool is_pinned_name(const char* zName) {
+    if (!zName || strncmp(zName, "/proc/self/fd/", 14)) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(pinned_lock);
+    for (auto& i : pinned_databases) {
+        const std::string& key = i.first;
+        if (!strncmp(zName, key.c_str(), key.size()) && (!zName[key.size()] || zName[key.size()] == '-')) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int pinned_open(sqlite3_vfs* vfs, const char* zName, sqlite3_file* file, int flags, int* outFlags) {
     if (name_refused(zName)) {
+        return SQLITE_CANTOPEN;
+    }
+    // the name of a super-journal is read from a journal, whose contents were not checked: one that is not in the
+    // directory of a pinned database is not opened (SQLite would remove it after reading it)
+    if ((flags & SQLITE_OPEN_SUPER_JOURNAL) && !is_pinned_name(zName)) {
         return SQLITE_CANTOPEN;
     }
     int rc = base_vfs->xOpen(base_vfs, zName, file, flags, outFlags);

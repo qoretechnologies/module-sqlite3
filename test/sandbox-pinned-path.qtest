@@ -71,6 +71,7 @@ int sub open_close(string db, int count) {
         addTestCase("the journal is written in the directory checked", \testJournal());
         addTestCase("a pinned database has no shared memory (no WAL mode)", \testWal());
         addTestCase("a file of the database that is a link is not used", \testDerivedLink());
+        addTestCase("a hot journal cannot name a super-journal outside of the directory", \testSuperJournal());
         addTestCase("a denied database is not opened", \testDenied());
         addTestCase("a connection closed releases its pinned directory", \testRelease());
         addTestCase("a directory replaced after the check is not used", \testDirSwap());
@@ -190,6 +191,60 @@ int sub open_close(string db, int count) {
         # the database is unchanged
         unlink(db + "-journal");
         assertEq(("a",), p.callFunction("read_rows", db));
+    }
+
+    #! returns a hot rollback journal for a database with pages of \a page_size bytes that names \a super as its
+    #! super-journal (the journal format of SQLite: a header of one sector, no page records, and the super-journal
+    #! record at the end)
+    static binary hotJournal(int page_size, string super) {
+        int sector = 4096;
+        # magic, the record count (0: computed from the size), the checksum initializer, the database size in pages,
+        # the sector size and the page size, padded to a sector
+        string hex = "d9d505f920a163d7" + sprintf("%08x%08x%08x%08x%08x", 0, 0, 1, sector, page_size);
+        hex += strmul("00", sector - hex.size() / 2);
+        # the super-journal record: the lock-byte page number, the name, its length, its checksum and the magic
+        int cksum = 0;
+        binary name = super.toBinary();
+        for (int i = 0; i < name.size(); ++i) {
+            cksum += get_byte(name, i);
+        }
+        hex += sprintf("%08x", 0x40000000 / page_size + 1) + make_hex_string(super)
+            + sprintf("%08x%08x", super.size(), cksum & 0xffffffff) + "d9d505f920a163d7";
+        return parse_hex_string(hex);
+    }
+
+    testSuperJournal() {
+        TmpDir dir("sqlite-pin-super");
+        TmpDir outside("sqlite-pin-super-out");
+        Program p = sandboxed(dir.path, QSEC_READ | QSEC_WRITE | QSEC_CREATE);
+        string db = dir.path + "/h.db";
+        assertEq(("a",), p.callFunction("write_rows", db, NOTHING, "a"));
+        int page_size;
+        {
+            Datasource ds("sqlite3", "", "", db);
+            ds.open();
+            on_exit ds.close();
+            page_size = ds.selectRow("pragma page_size").page_size;
+        }
+
+        # a file outside of the sandbox, named as the super-journal of a hot journal planted in the directory
+        string victim = outside.path + "/victim";
+        File f();
+        f.open2(victim, O_CREAT | O_WRONLY | O_TRUNC);
+        f.write("not a journal");
+        f.close();
+        f.open2(db + "-journal", O_CREAT | O_WRONLY | O_TRUNC);
+        f.write(hotJournal(page_size, victim));
+        f.close();
+
+        # the pinned connection does not open the super-journal outside, and so does not remove it
+        try {
+            p.callFunction("read_rows", db);
+        } catch (hash<ExceptionInfo> ex) {
+            assertEq("SQLITE3-SELECT-ROWS", ex.err, ex.desc);
+        }
+        assertTrue(is_file(victim), "the file outside of the sandbox still exists");
+        assertEq("not a journal", ReadOnlyFile::readTextFile(victim));
     }
 
     testDenied() {
