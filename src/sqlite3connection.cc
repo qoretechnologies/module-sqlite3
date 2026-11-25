@@ -21,6 +21,7 @@
 */
 
 #include "sqlite3connection.h"
+#include "sqlite3vfs.h"
 
 
 QoreSqlite3Connection::QoreSqlite3Connection(sqlite3* handler, const QoreEncoding* enc)
@@ -66,6 +67,13 @@ bool QoreSqlite3Connection::rollback(ExceptionSink* xsink) {
 
 bool QoreSqlite3Connection::close() {
     int rc = sqlite3_close(m_handler);
+#ifdef QORE_SQLITE3_PINNED_VFS
+    // the pinned database is released once its files are closed (qore#7605)
+    if (rc == SQLITE_OK && !m_pinned.empty()) {
+        qore_sqlite3_unpin_database(m_pinned);
+        m_pinned.clear();
+    }
+#endif
     return (rc == SQLITE_OK);
 }
 

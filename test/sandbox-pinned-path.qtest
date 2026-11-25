@@ -1,0 +1,358 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%modern
+%requires QUnit
+%requires FsUtil
+%prepend-module-path "${SCRIPT_DIR}/../build"
+%requires sqlite3
+
+%exec-class SqlitePinnedPathTest
+
+#! The database of a connection that a sandbox restricts is opened in the directory checked (qore#7605)
+/** The database file is checked against the sandbox of the code that chose the connection values and its directory
+    is pinned (qore_dbi_pin_connect_path()); the database, its journal and its WAL files are then opened in the
+    directory checked, whatever the path names afterwards.
+
+    Needs a Qore with the pinned DBI connect path (QORE_HAS_DBI_PIN_CONNECT_PATH) on Linux; the test skips otherwise.
+    The cases that change the file system after the check need a Qore with library debugging
+    (dbg_fs_swap_on_open()).
+*/
+class SqlitePinnedPathTest inherits QUnit::Test {
+    public {
+        #! the code of the sandboxed program
+        const Code = "string sub db_name(string db) {
+    Datasource ds(\"sqlite3\", \"\", \"\", db);
+    ds.open();
+    on_exit ds.close();
+    return ds.selectRow(\"pragma database_list\").file;
+}
+
+list<auto> sub write_rows(string db, *string journal_mode, softlist<auto> rows) {
+    Datasource ds(\"sqlite3\", \"\", \"\", db);
+    ds.open();
+    on_exit ds.close();
+    if (journal_mode) {
+        ds.selectRow(\"pragma journal_mode = \" + journal_mode);
+    }
+    ds.exec(\"create table if not exists t (v varchar(20))\");
+    map ds.exec(\"insert into t values (%v)\", $1), rows;
+    ds.commit();
+    return map $1.v, ds.selectRows(\"select v from t order by v\");
+}
+
+string sub journal_mode(string db, string mode) {
+    Datasource ds(\"sqlite3\", \"\", \"\", db);
+    ds.open();
+    on_exit ds.close();
+    return ds.selectRow(\"pragma journal_mode = \" + mode).journal_mode;
+}
+
+list<auto> sub read_rows(string db) {
+    Datasource ds(\"sqlite3\", \"\", \"\", db);
+    ds.open();
+    on_exit ds.close();
+    return map $1.v, ds.selectRows(\"select v from t order by v\");
+}
+
+int sub open_close(string db, int count) {
+    for (int i = 0; i < count; ++i) {
+        Datasource ds(\"sqlite3\", \"\", \"\", db);
+        ds.open();
+        ds.close();
+    }
+    return count;
+}
+";
+    }
+
+    constructor() : QUnit::Test("SqlitePinnedPathTest", "1.0", \ARGV) {
+        addTestCase("a database under a sandbox is opened in the directory checked", \testOpenedPinned());
+        addTestCase("the journal is written in the directory checked", \testJournal());
+        addTestCase("a pinned database has no shared memory (no WAL mode)", \testWal());
+        addTestCase("a file of the database that is a link is not used", \testDerivedLink());
+        addTestCase("a hot journal cannot name a super-journal outside of the directory", \testSuperJournal());
+        addTestCase("a database path that is a link to an allowed file is opened", \testLinkedDatabase());
+        addTestCase("a denied database is not opened", \testDenied());
+        addTestCase("a connection closed releases its pinned directory", \testRelease());
+        addTestCase("a directory replaced after the check is not used", \testDirSwap());
+        addTestCase("a database file replaced after the check is not used", \testFileSwap());
+        set_return_value(main());
+    }
+
+    setUp() {
+        if (!haveDbiSandboxCheck()) {
+            testSkip("this Qore does not check DBI connections against the sandbox");
+        }
+        if (PlatformOS != "Linux") {
+            testSkip("databases are opened through their pinned directory on Linux only");
+        }
+        TmpDir dir("sqlite-pin-probe");
+        Program p = sandboxed(dir.path, QSEC_READ | QSEC_WRITE | QSEC_CREATE);
+        if (!p.callFunction("db_name", dir.path + "/probe.db").startsWith("/proc/self/fd/")) {
+            testSkip("this module is not built with the pinned DBI connect path (QORE_HAS_DBI_PIN_CONNECT_PATH)");
+        }
+    }
+
+    #! returns True if Qore checks DBI connections against the sandbox (qore#5747): it has DBI_CAP_LOCAL_ONLY
+    static bool haveDbiSandboxCheck() {
+        Program p(PO_NEW_STYLE);
+        try {
+            p.parse("int sub f() { return DBI_CAP_LOCAL_ONLY; }", "check");
+            return True;
+        } catch (hash<ExceptionInfo> ex) {
+            return False;
+        }
+    }
+
+    #! returns a program in a sandbox that allows only \a allowed with \a mode
+    static Program sandboxed(string allowed, int mode) {
+        SandboxManager sm();
+        sm.setNetworkDefaultPolicy(False);
+        sm.setFilesystemDefaultPolicy(False);
+        sm.addFilesystemAllowedPath(allowed, mode);
+        Program p(PO_NEW_STYLE);
+        p.setSandboxManager(sm);
+        p.parse(Code, "sqlite-pinned");
+        return p;
+    }
+
+    #! returns the names of the files in \a dir
+    static list<string> files(string dir) {
+        Dir d();
+        d.chdir(dir);
+        return sort(d.listFiles() ?? ());
+    }
+
+    testOpenedPinned() {
+        TmpDir dir("sqlite-pin-open");
+        Program p = sandboxed(dir.path, QSEC_READ | QSEC_WRITE | QSEC_CREATE);
+        string name = p.callFunction("db_name", dir.path + "/a.db");
+        # the database is opened through the directory held, by its name
+        assertRegex("^/proc/self/fd/[0-9]+/a\\.db$", name);
+        assertTrue(is_file(dir.path + "/a.db"), "the database is created in the directory checked");
+
+        # without a sandbox, the database is opened by the path given
+        Datasource ds("sqlite3", "", "", dir.path + "/a.db");
+        ds.open();
+        on_exit ds.close();
+        assertEq(dir.path + "/a.db", ds.selectRow("pragma database_list").file);
+    }
+
+    testJournal() {
+        TmpDir dir("sqlite-pin-journal");
+        Program p = sandboxed(dir.path, QSEC_READ | QSEC_WRITE | QSEC_CREATE);
+        string db = dir.path + "/j.db";
+        assertEq(("a", "b"), p.callFunction("write_rows", db, "persist", ("a", "b")));
+        # a persistent journal stays after the transaction: it was written in the directory checked
+        assertEq(("j.db", "j.db-journal"), files(dir.path));
+        assertEq(("a", "b", "c"), p.callFunction("write_rows", db, "persist", "c"));
+        assertEq(("a", "b", "c"), p.callFunction("read_rows", db));
+    }
+
+    testWal() {
+        TmpDir dir("sqlite-pin-wal");
+        Program p = sandboxed(dir.path, QSEC_READ | QSEC_WRITE | QSEC_CREATE);
+        string db = dir.path + "/w.db";
+        assertEq(("x",), p.callFunction("write_rows", db, NOTHING, "x"));
+        # a pinned database has no shared memory: WAL mode is not available, and the journal mode is unchanged
+        assertEq("delete", p.callFunction("journal_mode", db, "wal"));
+        assertEq(("x", "y"), p.callFunction("write_rows", db, NOTHING, "y"));
+        assertEq(("w.db",), files(dir.path), "no WAL file is created");
+
+        # a database in WAL mode cannot be opened by a pinned connection
+        Datasource ds("sqlite3", "", "", db);
+        ds.open();
+        on_exit ds.close();
+        assertEq("wal", ds.selectRow("pragma journal_mode = wal").journal_mode);
+        assertEq(("x", "y"), map $1.v, ds.selectRows("select v from t order by v"));
+        assertThrows("SQLITE3-SELECT-ROWS", \p.callFunction(),
+            ("read_rows", db));
+        assertEq(("w.db", "w.db-shm", "w.db-wal"), files(dir.path), "the WAL files are those of the unrestricted "
+            "connection");
+    }
+
+    testDerivedLink() {
+        TmpDir dir("sqlite-pin-link");
+        TmpDir outside("sqlite-pin-link-out");
+        Program p = sandboxed(dir.path, QSEC_READ | QSEC_WRITE | QSEC_CREATE);
+        string db = dir.path + "/l.db";
+        assertEq(("a",), p.callFunction("write_rows", db, NOTHING, "a"));
+
+        # a journal planted as a link to a file outside of the sandbox is not written
+        string target = outside.path + "/target";
+        File f();
+        f.open2(target, O_CREAT | O_WRONLY | O_TRUNC);
+        f.write("unchanged");
+        f.close();
+        symlink(target, db + "-journal");
+        assertThrows("SQLITE3-EXEC", \p.callFunction(), ("write_rows", db, NOTHING, "b"));
+        assertEq("unchanged", ReadOnlyFile::readTextFile(target));
+        assertEq(("target",), files(outside.path));
+        # the database is unchanged
+        unlink(db + "-journal");
+        assertEq(("a",), p.callFunction("read_rows", db));
+    }
+
+    #! returns a hot rollback journal for a database with pages of \a page_size bytes that names \a super as its
+    #! super-journal (the journal format of SQLite: a header of one sector, no page records, and the super-journal
+    #! record at the end)
+    static binary hotJournal(int page_size, string super) {
+        int sector = 4096;
+        # magic, the record count (0: computed from the size), the checksum initializer, the database size in pages,
+        # the sector size and the page size, padded to a sector
+        string hex = "d9d505f920a163d7" + sprintf("%08x%08x%08x%08x%08x", 0, 0, 1, sector, page_size);
+        hex += strmul("00", sector - hex.size() / 2);
+        # the super-journal record: the lock-byte page number, the name, its length, its checksum and the magic
+        int cksum = 0;
+        binary name = super.toBinary();
+        for (int i = 0; i < name.size(); ++i) {
+            cksum += get_byte(name, i);
+        }
+        hex += sprintf("%08x", 0x40000000 / page_size + 1) + make_hex_string(super)
+            + sprintf("%08x%08x", super.size(), cksum & 0xffffffff) + "d9d505f920a163d7";
+        return parse_hex_string(hex);
+    }
+
+    testSuperJournal() {
+        TmpDir dir("sqlite-pin-super");
+        TmpDir outside("sqlite-pin-super-out");
+        Program p = sandboxed(dir.path, QSEC_READ | QSEC_WRITE | QSEC_CREATE);
+        string db = dir.path + "/h.db";
+        assertEq(("a",), p.callFunction("write_rows", db, NOTHING, "a"));
+        int page_size;
+        {
+            Datasource ds("sqlite3", "", "", db);
+            ds.open();
+            on_exit ds.close();
+            page_size = ds.selectRow("pragma page_size").page_size;
+        }
+
+        # a file outside of the sandbox, named as the super-journal of a hot journal planted in the directory
+        string victim = outside.path + "/victim";
+        File f();
+        f.open2(victim, O_CREAT | O_WRONLY | O_TRUNC);
+        f.write("not a journal");
+        f.close();
+        f.open2(db + "-journal", O_CREAT | O_WRONLY | O_TRUNC);
+        f.write(hotJournal(page_size, victim));
+        f.close();
+
+        # the pinned connection does not open the super-journal outside, and so does not remove it
+        try {
+            p.callFunction("read_rows", db);
+        } catch (hash<ExceptionInfo> ex) {
+            assertEq("SQLITE3-SELECT-ROWS", ex.err, ex.desc);
+        }
+        assertTrue(is_file(victim), "the file outside of the sandbox still exists");
+        assertEq("not a journal", ReadOnlyFile::readTextFile(victim));
+    }
+
+    testLinkedDatabase() {
+        TmpDir dir("sqlite-pin-linked");
+        TmpDir outside("sqlite-pin-linked-out");
+        string real = dir.path + "/data";
+        mkdir(real);
+        Program p = sandboxed(dir.path, QSEC_READ | QSEC_WRITE | QSEC_CREATE);
+        assertEq(("a",), p.callFunction("write_rows", real + "/r.db", NOTHING, "a"));
+        # the database name is a link to a database in the sandbox: the database that it names is checked and opened,
+        # with its journal next to it
+        symlink(real + "/r.db", dir.path + "/l.db");
+        assertEq(("a", "b"), p.callFunction("write_rows", dir.path + "/l.db", "persist", "b"));
+        assertTrue(is_file(real + "/r.db-journal"), "the journal is next to the database");
+        # a link to a database outside of the sandbox is denied
+        Datasource ods("sqlite3", "", "", outside.path + "/o.db");
+        ods.open();
+        ods.exec("create table t (v varchar(20))");
+        ods.commit();
+        ods.close();
+        symlink(outside.path + "/o.db", dir.path + "/o.db");
+        assertThrows("FILESYSTEM-ACCESS-DENIED", \p.callFunction(), ("read_rows", dir.path + "/o.db"));
+    }
+
+    testDenied() {
+        TmpDir dir("sqlite-pin-denied");
+        TmpDir outside("sqlite-pin-denied-out");
+        Program p = sandboxed(dir.path, QSEC_READ | QSEC_WRITE | QSEC_CREATE);
+        assertThrows("FILESYSTEM-ACCESS-DENIED", \p.callFunction(), ("write_rows", outside.path + "/d.db", NOTHING,
+            "a"));
+        assertEq((), files(outside.path));
+        # a directory allowed for reading only cannot hold a database
+        Program pr = sandboxed(dir.path, QSEC_READ);
+        assertThrows("FILESYSTEM-ACCESS-DENIED", \pr.callFunction(), ("write_rows", dir.path + "/r.db", NOTHING,
+            "a"));
+        assertEq((), files(dir.path));
+    }
+
+    testRelease() {
+        TmpDir dir("sqlite-pin-release");
+        Program p = sandboxed(dir.path, QSEC_READ | QSEC_WRITE | QSEC_CREATE);
+        string db = dir.path + "/r.db";
+        p.callFunction("open_close", db, 1);
+        int before = files("/proc/self/fd").size();
+        assertEq(50, p.callFunction("open_close", db, 50));
+        assertEq(before, files("/proc/self/fd").size(), "no descriptor is left open");
+    }
+
+    testDirSwap() {
+        if (!Option::HAVE_LIBRARY_DEBUGGING) {
+            testSkip("needs a Qore with library debugging");
+        }
+        TmpDir dir("sqlite-pin-dirswap");
+        string allowed = dir.path + "/allowed";
+        string real = allowed + "/r";
+        string link = allowed + "/l";
+        string outside = dir.path + "/outside";
+        mkdir(allowed);
+        mkdir(real);
+        mkdir(outside);
+        symlink(real, link);
+        Program p = sandboxed(allowed, QSEC_READ | QSEC_WRITE | QSEC_CREATE);
+
+        # the link to the directory checked is replaced by one to a directory outside of the sandbox after the check:
+        # the database and its journal are written in the directory checked
+        call_function("dbg_fs_swap_on_open", link + "/*", outside);
+        on_exit call_function("dbg_fs_swap_on_open", "", "");
+        assertEq(("a", "b"), p.callFunction("write_rows", link + "/s.db", "persist", ("a", "b")));
+        assertEq(outside, readlink(link), "the link was replaced after the check");
+        assertEq((), files(outside), "nothing is written outside of the sandbox");
+        assertEq(("s.db", "s.db-journal"), files(real));
+
+        # an existing database: the one checked is read
+        unlink(link);
+        symlink(real, link);
+        Datasource ods("sqlite3", "", "", outside + "/s.db");
+        ods.open();
+        ods.exec("create table t (v varchar(20))");
+        ods.exec("insert into t values ('outside')");
+        ods.commit();
+        ods.close();
+        call_function("dbg_fs_swap_on_open", link + "/*", outside);
+        assertEq(("a", "b"), p.callFunction("read_rows", link + "/s.db"));
+        assertEq(outside, readlink(link), "the link was replaced after the check");
+    }
+
+    testFileSwap() {
+        if (!Option::HAVE_LIBRARY_DEBUGGING) {
+            testSkip("needs a Qore with library debugging");
+        }
+        TmpDir dir("sqlite-pin-fileswap");
+        TmpDir outside("sqlite-pin-fileswap-out");
+        Program p = sandboxed(dir.path, QSEC_READ | QSEC_WRITE | QSEC_CREATE);
+        string db = dir.path + "/f.db";
+        assertEq(("inside",), p.callFunction("write_rows", db, NOTHING, "inside"));
+        Datasource ods("sqlite3", "", "", outside.path + "/f.db");
+        ods.open();
+        ods.exec("create table t (v varchar(20))");
+        ods.exec("insert into t values ('outside')");
+        ods.commit();
+        ods.close();
+
+        # the database file is replaced by a link to a database outside of the sandbox after the check: it is not
+        # opened
+        call_function("dbg_fs_swap_on_open", db, outside.path + "/f.db");
+        on_exit call_function("dbg_fs_swap_on_open", "", "");
+        assertThrows("SQLITE3-CONNECT-ERROR", \p.callFunction(), ("read_rows", db));
+        assertEq("SYMBOLIC-LINK", hlstat(db).type, "the file was replaced after the check");
+    }
+}

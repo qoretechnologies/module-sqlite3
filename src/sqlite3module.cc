@@ -33,6 +33,7 @@
 
 #include "sqlite3module.h"
 #include "sqlite3connection.h"
+#include "sqlite3vfs.h"
 #include "sqlite3executor.h"
 
 #if defined(QDBI_METHOD_STMT_FETCH_COLUMNAR) || defined(QDBI_METHOD_SELECT_COLUMNAR)
@@ -172,7 +173,7 @@ static void sqlite3_thread_cleanup(void *unused) {
 //     if (pthread_getspecific(ptk_sqlite3))
 }
 
-static sqlite3* qore_sqlite3_init(Datasource* ds, ExceptionSink* xsink) {
+static sqlite3* qore_sqlite3_init(Datasource* ds, ExceptionSink* xsink, std::string& pinned) {
     if (!ds->getDBName()) {
         xsink->raiseException("DATASOURCE-MISSING-DBNAME", "Datasource has an empty dbname parameter");
         return nullptr;
@@ -197,6 +198,15 @@ static sqlite3* qore_sqlite3_init(Datasource* ds, ExceptionSink* xsink) {
             "against the sandbox", dbname);
         return nullptr;
     }
+#ifdef QORE_SQLITE3_PINNED_VFS
+    // a database of a connection that a sandbox restricts is checked and pinned: it is opened through the pinned
+    // VFS, which reaches the file checked and its journal in the directory checked (qore#7605)
+    if (strcmp(dbname, ":memory:") && qore_dbi_connect_restricted(ds)) {
+        if (qore_sqlite3_pin_database(ds, dbname, pinned, xsink)) {
+            return nullptr;
+        }
+    } else
+#endif
     if (strcmp(dbname, ":memory:")
         && qore_dbi_check_connect_path(ds, dbname, QSEC_READ | QSEC_WRITE | QSEC_CREATE, xsink)) {
         return nullptr;
@@ -222,14 +232,33 @@ static sqlite3* qore_sqlite3_init(Datasource* ds, ExceptionSink* xsink) {
 #endif
 
     sqlite3* db = nullptr;
-    int ret = sqlite3_open(ds->getDBName(), &db);
+    int ret;
+#ifdef QORE_SQLITE3_PINNED_VFS
+    // the pinned database is released if the connection is not made
+    struct PinRelease {
+        std::string& name;
+        bool keep = false;
+        ~PinRelease() {
+            if (!keep && !name.empty()) {
+                qore_sqlite3_unpin_database(name);
+                name.clear();
+            }
+        }
+    } pin_release{pinned};
+    if (!pinned.empty()) {
+        ret = sqlite3_open_v2(pinned.c_str(), &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE,
+            QORE_SQLITE3_PINNED_VFS_NAME);
+    } else
+#endif
+    ret = sqlite3_open(ds->getDBName(), &db);
     // SQLite can return a handle on failure; every returned handle must be closed.
     Sqlite3Handle holder(db, sqlite3_close);
     if (qore_check_cancel(xsink, "opening SQLite database")) {
         return nullptr;
     }
     if (ret != SQLITE_OK) {
-        xsink->raiseException("SQLITE3-CONNECT-ERROR", "cannot open %s", ds->getDBName());
+        xsink->raiseException("SQLITE3-CONNECT-ERROR", "cannot open %s: %s", ds->getDBName(),
+            db ? sqlite3_errmsg(db) : sqlite3_errstr(ret));
         return nullptr;
     }
 
@@ -252,6 +281,9 @@ static sqlite3* qore_sqlite3_init(Datasource* ds, ExceptionSink* xsink) {
         return nullptr;
     }
 
+#ifdef QORE_SQLITE3_PINNED_VFS
+    pin_release.keep = true;
+#endif
     return holder.release();
 }
 
@@ -338,12 +370,30 @@ static int qore_sqlite3_open_datasource(Datasource* ds, ExceptionSink* xsink) {
 // 	printf("open datasource\n");
     checkInit();
 
-    Sqlite3Handle db(qore_sqlite3_init(ds, xsink), sqlite3_close);
+    std::string pinned;
+    Sqlite3Handle db(qore_sqlite3_init(ds, xsink, pinned), sqlite3_close);
     if (!db) {
         return -1;
     }
 
-    QoreSqlite3Connection* d_sqlite3 = new QoreSqlite3Connection(db.get(), QEM.findCreate(ds->getOSEncoding()));
+    QoreSqlite3Connection* d_sqlite3;
+    try {
+        // the connection does not close the handle when deleted
+        std::unique_ptr<QoreSqlite3Connection> c(new QoreSqlite3Connection(db.get(),
+            QEM.findCreate(ds->getOSEncoding())));
+        c->setPinnedName(pinned);
+        d_sqlite3 = c.release();
+    } catch (std::bad_alloc&) {
+#ifdef QORE_SQLITE3_PINNED_VFS
+        // the pinned database is released once the connection is closed
+        db.reset();
+        if (!pinned.empty()) {
+            qore_sqlite3_unpin_database(pinned);
+        }
+#endif
+        xsink->outOfMemory();
+        return -1;
+    }
     db.release();
     ds->setPrivateData(d_sqlite3);
 
@@ -494,6 +544,13 @@ static int qore_sqlite3_stmt_close(SQLStatement* stmt, ExceptionSink* xsink) {
 }
 
 static void qore_sqlite3_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink) {
+#ifdef QORE_SQLITE3_PINNED_VFS
+    // the VFS that opens the databases of connections that a sandbox restricts (qore#7605)
+    if (qore_sqlite3_pinned_vfs_init()) {
+        xsink.raiseException("SQLITE3-INIT-ERROR", "cannot register the SQLite VFS for pinned databases");
+        return;
+    }
+#endif
     pthread_key_create(&ptk_sqlite3, NULL);
     tclist.push(sqlite3_thread_cleanup, NULL);
 
@@ -562,6 +619,9 @@ static void qore_sqlite3_module_ns_init(QoreNamespace* rns, QoreNamespace* qns, 
 static void qore_sqlite3_module_delete() {
     QORE_TRACE("qore_sqlite3_module_delete()");
 
+#ifdef QORE_SQLITE3_PINNED_VFS
+    qore_sqlite3_pinned_vfs_done();
+#endif
     // cleanup any thread data
     tclist.pop(1);
     // delete thread key

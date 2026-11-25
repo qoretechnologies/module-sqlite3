@@ -39,6 +39,7 @@ set(CPP_SRC
     src/sqlite3executor.cc
     src/sqlite3functions.cc
     src/sqlite3module.cc
+    src/sqlite3vfs.cc
 )
 
 set(module_name "sqlite3")

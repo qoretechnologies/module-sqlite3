@@ -59,10 +59,19 @@ Datasource ds("sqlite3:@/tmp/my-file.sqlite(utf8)");
 
     A refused statement raises a \c FILESYSTEM-ACCESS-DENIED exception.  SQLite also creates files next to the
     database (its journal, write-ahead log and lock files) and temporary files in the system's temporary directory,
-    which are not checked separately.  A file is checked by its path, so a file that is replaced after the check (a
-    symbolic link to a file outside the sandbox root, made by code that can create one inside it) is opened as it is
-    then; this applies to the database file and to \c ATTACH, whose file is checked when the statement is compiled
-    and opened when it runs, which for a prepared statement (SQLStatement) can be much later.
+    which are not checked separately.
+
+    On Linux, with a %Qore version that pins the local path of a connection (\c QORE_HAS_DBI_PIN_CONNECT_PATH), the
+    database of a connection that a sandbox restricts is opened in the directory that was checked: the database file
+    and the journal files that SQLite creates next to it are opened in that directory, by name, without following a
+    symbolic link, whatever its path names after the check; the name of the database that SQLite reports
+    (\c PRAGMA \c database_list) is then a \c /proc/self/fd/ path, so such a connection needs \c /proc.  Such a
+    connection has no shared memory, so WAL mode (\c PRAGMA \c journal_mode \c = \c wal) is not available: the
+    journal mode is unchanged, and a database in WAL mode cannot be read.  Otherwise, and
+    for \c ATTACH, a file is checked by its path, so a file that is replaced after the check (a symbolic link to a
+    file outside the sandbox root, made by code that can create one inside it) is opened as it is then; an
+    \c ATTACH file is checked when the statement is compiled and opened when it runs, which for a prepared statement
+    (SQLStatement) can be much later.
 
     @section sqlite3documentation Documentation
 

@@ -26,6 +26,8 @@
 #include <sqlite3.h>
 #include <qore/Qore.h>
 
+#include <string>
+
 /*! \brief A Qore ready wrapper for Sqlite3 API.
     There is only one instance of this class in this module.
     All select/exec depending stuff is located in QoreSqlite3Executor,
@@ -49,6 +51,9 @@ public:
         \retval sqlite3* sqlite3 handler.
     */
     DLLLOCAL sqlite3* handler() { return m_handler; };
+
+    //! sets the name of the pinned database of the connection, released when the connection is closed (qore#7605)
+    DLLLOCAL void setPinnedName(const std::string& name) { m_pinned = name; }
 
     /*! \brief Start a transaction.
         Error checking is left for sqlite3 engine.
@@ -95,6 +100,8 @@ public:
 private:
     //! The current sqlite3 connection.
     sqlite3* m_handler;
+    //! the name of the pinned database, if any (qore#7605)
+    std::string m_pinned;
 
     //! The character encoding touse for string data
     const QoreEncoding* enc;
