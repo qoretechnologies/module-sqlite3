@@ -40,11 +40,15 @@
 //! registers the VFS that opens the files of pinned databases; returns 0 for OK
 DLLLOCAL int qore_sqlite3_pinned_vfs_init();
 
+//! unregisters the VFS that opens the files of pinned databases, when the module is deleted
+DLLLOCAL void qore_sqlite3_pinned_vfs_done();
+
 //! pins the database file of a connection that a sandbox restricts (qore#7605)
 /** The file is checked against the sandbox of the code that chose the connection values and pinned
     (qore_dbi_pin_connect_path()); the database is then opened with the name returned in \a name (the procfs path
     of the directory held and the name of the file) and the VFS QORE_SQLITE3_PINNED_VFS_NAME, so that the database
-    and the files that SQLite derives from its name (journal, WAL, shared memory) are opened in the directory checked;
+    and the files that SQLite derives from its name (journal, super-journal) are opened in the directory checked; the
+    database has no shared memory, so WAL mode is not available;
     \a name is empty if the path is not pinned (no sandbox restricts the connection): the database is then opened by
     the path given
 

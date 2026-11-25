@@ -376,9 +376,25 @@ static int qore_sqlite3_open_datasource(Datasource* ds, ExceptionSink* xsink) {
         return -1;
     }
 
-    QoreSqlite3Connection* d_sqlite3 = new QoreSqlite3Connection(db.get(), QEM.findCreate(ds->getOSEncoding()));
+    QoreSqlite3Connection* d_sqlite3;
+    try {
+        // the connection does not close the handle when deleted
+        std::unique_ptr<QoreSqlite3Connection> c(new QoreSqlite3Connection(db.get(),
+            QEM.findCreate(ds->getOSEncoding())));
+        c->setPinnedName(pinned);
+        d_sqlite3 = c.release();
+    } catch (std::bad_alloc&) {
+#ifdef QORE_SQLITE3_PINNED_VFS
+        // the pinned database is released once the connection is closed
+        db.reset();
+        if (!pinned.empty()) {
+            qore_sqlite3_unpin_database(pinned);
+        }
+#endif
+        xsink->outOfMemory();
+        return -1;
+    }
     db.release();
-    d_sqlite3->setPinnedName(pinned);
     ds->setPrivateData(d_sqlite3);
 
     return 0;
@@ -603,6 +619,9 @@ static void qore_sqlite3_module_ns_init(QoreNamespace* rns, QoreNamespace* qns, 
 static void qore_sqlite3_module_delete() {
     QORE_TRACE("qore_sqlite3_module_delete()");
 
+#ifdef QORE_SQLITE3_PINNED_VFS
+    qore_sqlite3_pinned_vfs_done();
+#endif
     // cleanup any thread data
     tclist.pop(1);
     // delete thread key

@@ -69,7 +69,7 @@ int sub open_close(string db, int count) {
     constructor() : QUnit::Test("SqlitePinnedPathTest", "1.0", \ARGV) {
         addTestCase("a database under a sandbox is opened in the directory checked", \testOpenedPinned());
         addTestCase("the journal is written in the directory checked", \testJournal());
-        addTestCase("WAL mode works in the directory checked", \testWal());
+        addTestCase("a pinned database has no shared memory (no WAL mode)", \testWal());
         addTestCase("a file of the database that is a link is not used", \testDerivedLink());
         addTestCase("a denied database is not opened", \testDenied());
         addTestCase("a connection closed releases its pinned directory", \testRelease());
@@ -153,16 +153,21 @@ int sub open_close(string db, int count) {
         Program p = sandboxed(dir.path, QSEC_READ | QSEC_WRITE | QSEC_CREATE);
         string db = dir.path + "/w.db";
         assertEq(("x",), p.callFunction("write_rows", db, NOTHING, "x"));
-        assertEq("wal", p.callFunction("journal_mode", db, "wal"));
+        # a pinned database has no shared memory: WAL mode is not available, and the journal mode is unchanged
+        assertEq("delete", p.callFunction("journal_mode", db, "wal"));
         assertEq(("x", "y"), p.callFunction("write_rows", db, NOTHING, "y"));
-        assertEq(("x", "y"), p.callFunction("read_rows", db));
+        assertEq(("w.db",), files(dir.path), "no WAL file is created");
 
-        # the WAL files exist while a connection is open: they are in the directory checked
+        # a database in WAL mode cannot be opened by a pinned connection
         Datasource ds("sqlite3", "", "", db);
         ds.open();
         on_exit ds.close();
+        assertEq("wal", ds.selectRow("pragma journal_mode = wal").journal_mode);
         assertEq(("x", "y"), map $1.v, ds.selectRows("select v from t order by v"));
-        assertEq(("w.db", "w.db-shm", "w.db-wal"), files(dir.path));
+        assertThrows("SQLITE3-SELECT-ROWS", \p.callFunction(),
+            ("read_rows", db));
+        assertEq(("w.db", "w.db-shm", "w.db-wal"), files(dir.path), "the WAL files are those of the unrestricted "
+            "connection");
     }
 
     testDerivedLink() {
