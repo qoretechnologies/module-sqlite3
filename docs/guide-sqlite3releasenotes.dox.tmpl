@@ -13,6 +13,9 @@
       in a sandbox that denies network access can still open a database file that its filesystem policy allows; the
       database file is checked against the policy of the code that chose it, in a %Qore version that checks DBI
       connections against the sandbox (see @ref sqlite3sandbox)
+    - on Linux, with a %Qore version that pins the local path of a connection, the database of a connection that a
+      sandbox restricts and the files that SQLite creates next to it are opened in the directory that was checked
+      (see @ref sqlite3sandbox)
     - failed connection attempts now release the SQLite handle returned with an error;
       cancellation during open or initialization closes the handle and preserves the cancellation exception
     - raised the build language requirement to C++17, matching the current Qore headers
